@@ -1,0 +1,309 @@
+LENY TV 1.55 — PARTE 37 DE LA EXPORTACION DEL CODIGO FUENTE
+===========================================================
+Contenido LITERAL. Continuacion de PlayerActivity.java (se pega JUSTO DETRAS de
+la parte 36, sin repetir lineas).
+Ruta original: src/main/java/com/pocketbuilder/app_wslenytv1792177359057/PlayerActivity.java
+
+
+<<<<<< CONTINUACION: src/main/java/com/pocketbuilder/app_wslenytv1792177359057/PlayerActivity.java >>>>>>
+    /**
+     * Barra superior del reproductor, copiada de la captura: flecha para volver,
+     * nombre del canal y, a la derecha, pantalla completa, ventana flotante,
+     * ajustes, volumen y candado (el candado de siempre, colocado aquí).
+     */
+    private View buildTopBarSkin() {
+        topBar = new LinearLayout(this);
+        topBar.setOrientation(LinearLayout.HORIZONTAL);
+        topBar.setGravity(Gravity.CENTER_VERTICAL);
+        topBar.setPadding(Ui.dpi(this, 6), Ui.dpi(this, 4), Ui.dpi(this, 6), Ui.dpi(this, 8));
+        android.graphics.drawable.GradientDrawable shade = new android.graphics.drawable.GradientDrawable(
+                android.graphics.drawable.GradientDrawable.Orientation.TOP_BOTTOM,
+                new int[]{0xE6000000, 0x00000000});
+        topBar.setBackground(shade);
+
+        View backButton = skinButton(Icons.back(this, Ui.TEXT), 42f, "Volver a la lista de canales");
+        backButton.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                finish();
+            }
+        });
+        topBar.addView(backButton);
+
+        topTitle = Ui.text(this, "", 19f, 0xFFFFFFFF, true);
+        topTitle.setSingleLine(true);
+        topTitle.setEllipsize(TextUtils.TruncateAt.END);
+        LinearLayout.LayoutParams titleParams = new LinearLayout.LayoutParams(0,
+                LinearLayout.LayoutParams.WRAP_CONTENT, 1f);
+        titleParams.leftMargin = Ui.dpi(this, 8);
+        titleParams.rightMargin = Ui.dpi(this, 4);
+        topBar.addView(topTitle, titleParams);
+
+        // La captura solo muestra el nombre del canal: este texto no se ve, pero se
+        // sigue creando porque los avisos internos lo actualizan.
+        topSubtitle = Ui.text(this, "", 11f, Ui.TEXT_DIM, false);
+        topSubtitle.setVisibility(View.GONE);
+
+        fullscreenButton = skinButton(Icons.expand(this, Ui.TEXT), 42f, "Pantalla completa");
+        fullscreenButton.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                applyImmersive(!immersive);
+                scheduleHide();
+            }
+        });
+        topBar.addView(fullscreenButton);
+
+        pipButton = skinButton(PlayerIcons.pip(this, Ui.TEXT), 42f, "Ventana flotante");
+        pipButton.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                enterPip();
+            }
+        });
+        topBar.addView(pipButton);
+
+        // Captura de referencia: aquí había un engranaje que solo abría volumen y
+        // brillo. El usuario ya tiene esas dos funciones con los gestos y el botón
+        // de altavoz, así que ese botón se ha quitado del reproductor.
+        // (El panel de ajustes del reproductor sigue existiendo para el resto de
+        // opciones, pero ya no se muestra desde esta barra.)
+
+        View volumeButton = skinButton(PlayerIcons.volume(this, Ui.TEXT), 42f, "Volumen");
+        volumeButton.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                toggleVolumeRow();
+            }
+        });
+        topBar.addView(volumeButton);
+
+        // Hueco del candado: ese botón ya existe y se coloca flotando justo aquí.
+        View lockSpace = new View(this);
+        topBar.addView(lockSpace, new LinearLayout.LayoutParams(Ui.dpi(this, 46), 1));
+
+        FrameLayout.LayoutParams params = new FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.WRAP_CONTENT);
+        params.gravity = Gravity.TOP;
+        topBar.setLayoutParams(params);
+        return topBar;
+    }
+
+    /**
+     * Barra inferior del reproductor, copiada de la captura: tiempos con la barra
+     * de progreso (punto rojo) y debajo los seis botones: imagen, anterior,
+     * pausar en azul, siguiente, lista de canales y subtítulos (calidad).
+     */
+    private View buildBottomBarSkin() {
+        bottomBar = new LinearLayout(this);
+        bottomBar.setOrientation(LinearLayout.VERTICAL);
+        bottomBar.setGravity(Gravity.CENTER_HORIZONTAL);
+        bottomBar.setPadding(Ui.dpi(this, 14), Ui.dpi(this, 4), Ui.dpi(this, 14), Ui.dpi(this, 6));
+        android.graphics.drawable.GradientDrawable shade = new android.graphics.drawable.GradientDrawable(
+                android.graphics.drawable.GradientDrawable.Orientation.BOTTOM_TOP,
+                new int[]{0xE6000000, 0x88000000, 0x00000000});
+        bottomBar.setBackground(shade);
+
+        // Fila de volumen: se abre y se cierra con el botón de altavoz de arriba.
+        volumeRow = new LinearLayout(this);
+        volumeRow.setOrientation(LinearLayout.HORIZONTAL);
+        volumeRow.setGravity(Gravity.CENTER_VERTICAL);
+        volumeRow.setVisibility(View.GONE);
+        volumeBar = new SeekBar(this);
+        volumeBar.setMax(100);
+        volumeBar.setProgress(volumePercent());
+        volumeBar.setContentDescription("Volumen");
+        volumeBar.setMinimumHeight(Ui.dpi(this, 34));
+        volumeBar.setProgressTintList(ColorStateList.valueOf(0xFFE0413A));
+        volumeBar.setThumbTintList(ColorStateList.valueOf(0xFFE0413A));
+        volumeBar.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener() {
+            @Override
+            public void onProgressChanged(SeekBar seekBar, int value, boolean fromUser) {
+                if (fromUser) setVolumePercent(value / 100f);
+            }
+
+            @Override
+            public void onStartTrackingTouch(SeekBar seekBar) {
+                ui.removeCallbacks(hideControls);
+            }
+
+            @Override
+            public void onStopTrackingTouch(SeekBar seekBar) {
+                scheduleHide();
+            }
+        });
+        volumeRow.addView(volumeBar, new LinearLayout.LayoutParams(
+                0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f));
+        bottomBar.addView(volumeRow, new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT));
+
+        LinearLayout times = new LinearLayout(this);
+        times.setOrientation(LinearLayout.HORIZONTAL);
+        times.setGravity(Gravity.CENTER_VERTICAL);
+
+        timeView = Ui.text(this, "00:00", 14f, 0xFFFFFFFF, true);
+        timeView.setTypeface(android.graphics.Typeface.MONOSPACE);
+        timeView.setSingleLine(true);
+        timeView.setMinWidth(Ui.dpi(this, 58));
+        timeView.setContentDescription("Tiempo transcurrido");
+        times.addView(timeView);
+
+        progressBar = new SeekBar(this);
+        progressBar.setMax(1000);
+        progressBar.setContentDescription("Barra de progreso del canal");
+        progressBar.setMinimumHeight(Ui.dpi(this, 34));
+        progressBar.setPadding(Ui.dpi(this, 6), 0, Ui.dpi(this, 6), 0);
+        progressBar.setProgressTintList(ColorStateList.valueOf(0xFFE0413A));
+        progressBar.setThumbTintList(ColorStateList.valueOf(0xFFE0413A));
+        progressBar.setProgressBackgroundTintList(ColorStateList.valueOf(0x66FFFFFF));
+        progressBar.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener() {
+            @Override
+            public void onProgressChanged(SeekBar seekBar, int value, boolean fromUser) {
+            }
+
+            @Override
+            public void onStartTrackingTouch(SeekBar seekBar) {
+                ui.removeCallbacks(hideControls);
+            }
+
+            @Override
+            public void onStopTrackingTouch(SeekBar seekBar) {
+                seekToProgress(seekBar.getProgress());
+                scheduleHide();
+            }
+        });
+        times.addView(progressBar, new LinearLayout.LayoutParams(
+                0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f));
+
+        durationView = Ui.text(this, "00:00", 14f, 0xFFFFFFFF, true);
+        durationView.setTypeface(android.graphics.Typeface.MONOSPACE);
+        durationView.setSingleLine(true);
+        durationView.setMinWidth(Ui.dpi(this, 58));
+        durationView.setGravity(Gravity.END);
+        durationView.setContentDescription("Duración del canal");
+        times.addView(durationView);
+
+        bottomBar.addView(times, new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT));
+
+        LinearLayout controls = new LinearLayout(this);
+        controls.setOrientation(LinearLayout.HORIZONTAL);
+        controls.setGravity(Gravity.CENTER);
+
+        aspectButton = skinButton(Icons.aspect(this, Ui.TEXT), 46f, "Ajustar la imagen en pantalla");
+        aspectButton.setOnClickListener(new HideThenRun(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                openAspectPanel();
+            }
+        }));
+        controls.addView(aspectButton, skinParams(0f));
+
+        prevButton = skinButton(PlayerIcons.rewind(this, Ui.TEXT), 46f, "Canal anterior");
+        prevButton.setOnClickListener(new HideThenRun(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                stepChannel(-1);
+            }
+        }));
+        controls.addView(prevButton, skinParams(6f));
+
+        playButton = skinButton(PlayerIcons.play(this, 0xFFFFFFFF), 54f, "Reproducir o pausar");
+        playButton.setBackground(Ui.buttonBg(this, 0xFF1E6FD9, 0xFF2F8CF0, 0x00000000, 8f));
+        playButton.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                togglePlay();
+                scheduleHide();
+            }
+        });
+        controls.addView(playButton, skinParams(10f));
+
+        nextButton = skinButton(PlayerIcons.forward(this, Ui.TEXT), 46f, "Canal siguiente");
+        nextButton.setOnClickListener(new HideThenRun(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                stepChannel(1);
+            }
+        }));
+        controls.addView(nextButton, skinParams(10f));
+
+        drawerButton = skinButton(Icons.list(this, Ui.TEXT), 46f, "Lista de canales");
+        drawerButton.setOnClickListener(new HideThenRun(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                openDrawer();
+            }
+        }));
+        controls.addView(drawerButton, skinParams(6f));
+
+        View subtitlesButton = skinButton(PlayerIcons.subtitles(this, Ui.TEXT), 46f,
+                "Elegir la calidad de vídeo");
+        subtitlesButton.setOnClickListener(new HideThenRun(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                openQualityPanel();
+            }
+        }));
+        controls.addView(subtitlesButton, skinParams(6f));
+
+        LinearLayout.LayoutParams controlParams = new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT);
+        controlParams.topMargin = Ui.dpi(this, 2);
+        bottomBar.addView(controls, controlParams);
+
+        FrameLayout.LayoutParams params = new FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.WRAP_CONTENT);
+        params.gravity = Gravity.BOTTOM;
+        params.bottomMargin = 0;
+        bottomBar.setLayoutParams(params);
+        return bottomBar;
+    }
+
+    /** Muestra u oculta la fila del volumen (botón de altavoz de la barra). */
+    private void toggleVolumeRow() {
+        if (volumeRow == null) return;
+        boolean showing = volumeRow.getVisibility() != View.VISIBLE;
+        if (showing && volumeBar != null) volumeBar.setProgress(volumePercent());
+        volumeRow.setVisibility(showing ? View.VISIBLE : View.GONE);
+        scheduleHide();
+    }
+
+    /** Lleva la reproducción al punto tocado en la barra de progreso. */
+    private void seekToProgress(int progress) {
+        if (dash != null || player == null || !prepared) return;
+        try {
+            int duration = player.getDuration();
+            if (duration <= 0) return;
+            player.seekTo(Math.round(duration * (progress / 1000f)));
+        } catch (Exception ignored) {
+        }
+    }
+
+    /** Ventana flotante (imagen en imagen) del botón de la barra superior. */
+    private void enterPip() {
+        try {
+            enterPictureInPictureMode(new android.app.PictureInPictureParams.Builder().build());
+        } catch (Throwable t) {
+            toast("Este teléfono no permite la ventana flotante");
+        }
+    }
+
+    @Override
+    public void onPictureInPictureModeChanged(boolean inPip,
+                                              android.content.res.Configuration config) {
+        super.onPictureInPictureModeChanged(inPip, config);
+        try {
+            if (inPip) {
+                setControlsVisible(false);
+            } else {
+                setControlsVisible(true);
+            }
+        } catch (Throwable ignored) {
+        }
+    }
+
+    // REVISIÓN 52: aquí estaban el cartel del canal (buildChannelBanner) y la
+    // función que lo mostraba al abrir o cambiar de canal (showChannelBanner).
+    // El usuario ha pedido quitarlo: tapaba la imagen justo al cambiar de canal.
+    // El nombre del canal sigue viéndose en la barra superior del reproductor.

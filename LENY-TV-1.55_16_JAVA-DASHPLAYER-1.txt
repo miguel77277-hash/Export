@@ -1,0 +1,534 @@
+LENY TV 1.55 — CODIGO FUENTE REAL — PARTE 16 (MOTOR DASH, 1 de 2)
+================================================================
+Texto LITERAL de src/main/java/com/pocketbuilder/app_wslenytv1792177359057/DashPlayer.java
+(83.253 bytes). Por su tamaño se reparte en DOS partes: esta parte 16 es el
+principio del archivo y la parte 17 es el final. Para reconstruirlo hay que unir
+el contenido de las dos, en orden, sin añadir ni quitar nada.
+
+AVISO IMPORTANTE: el archivo del proyecto se llama DashPlayer.java. Las dos
+partes llevan los mismos marcadores; al juntarlas solo debe quedar UNA cabecera
+"package ..." al principio y UNA llave de cierre al final.
+
+
+<<<<<< ARCHIVO: src/main/java/com/pocketbuilder/app_wslenytv1792177359057/DashPlayer.java (PARTE 16 de 2: principio del archivo) >>>>>>
+package com.pocketbuilder.app_wslenytv1792177359057;
+
+import android.content.Context;
+import android.media.AudioAttributes;
+import android.media.MediaPlayer;
+import android.net.Uri;
+import android.os.Handler;
+import android.view.Surface;
+
+import java.io.File;
+import java.io.FileOutputStream;
+import java.io.IOException;
+import java.io.InputStream;
+import java.net.HttpURLConnection;
+import java.net.URL;
+import java.util.ArrayList;
+import java.util.Locale;
+import java.util.Map;
+import java.util.TreeMap;
+import java.util.concurrent.ArrayBlockingQueue;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+
+/**
+ * Reproductor DASH de LENY TV.
+ *
+ * LEE el manifiesto .mpd, elige la calidad, y va pidiendo los trozos (segmentos)
+ * del canal para reproducirlos seguidos. Si el manifiesto trae el vídeo y el
+ * audio en pistas separadas —lo normal en DASH— copia las dos pistas en un solo
+ * archivo temporal antes de reproducirlo, para que el canal tenga imagen y
+ * sonido. En emisiones en directo salta siempre al trozo más reciente.
+ *
+ * El trabajo pesado (descargar y unir) se hace en un hilo aparte; el reproductor
+ * de Android solo se toca desde el hilo de la pantalla, con dos reproductores que
+ * se van relevando para que la imagen no se corte entre trozo y trozo.
+ */
+final class DashPlayer {
+
+    interface Listener {
+        /** Línea de estado para el registro y la barra superior. */
+        void onStatus(String message);
+
+        /** Cargando (todavía sin imagen). */
+        void onBuffering(boolean active);
+
+        /** Tamaño de la imagen ya en marcha. */
+        void onVideoSize(int width, int height);
+
+        /** No se pudo reproducir. */
+        void onError(String title, String body, boolean retryable);
+
+        /** Se acabó el contenido (no ocurre en directo). */
+        void onFinished();
+    }
+
+    /** Trozo ya preparado, listo para entregar al reproductor. */
+    private static final class Piece {
+        /** El archivo que se reproduce (con sonido si se pudieron unir las pistas). */
+        final File file;
+        /** El trozo de vídeo tal cual llegó, por si hay que repetirlo sin sonido. */
+        final File rawVideo;
+        final long startMs;
+        final long number;
+        final long time;
+        /** true si el archivo que se reproduce lleva el audio unido al vídeo. */
+        final boolean muxed;
+        /** Lo que se vio por dentro del trozo (pistas, códecs, muestras). */
+        final String check;
+
+        Piece(File file, File rawVideo, long startMs, long number, long time, boolean muxed, String check) {
+            this.file = file;
+            this.rawVideo = rawVideo;
+            this.startMs = startMs;
+            this.number = number;
+            this.time = time;
+            this.muxed = muxed;
+            this.check = check == null ? "" : check;
+        }
+    }
+
+    /** Uno de los dos reproductores que se van turnando. */
+    private static final class Slot {
+        MediaPlayer player;
+        File file;
+        long startMs;
+        Piece piece;
+        boolean prepared;
+        boolean chained;
+        boolean playing;
+    }
+
+    private static final long MAX_SEGMENT_BYTES = 48L * 1024L * 1024L;
+    private static final int CACHE_PIECES = 3;
+    private static final int LIVE_BEHIND_SEGMENTS = 3;
+    private static final long TICK_MS = 250L;
+    /** Si en este tiempo no se ha reproducido ni un trozo, se explica el motivo. */
+    private static final long NO_IMAGE_TIMEOUT_MS = 25000L;
+    /** Primera entrada del menú CALIDAD: la app elige sola la mejor resolución. */
+    static final String AUTOMATIC_LABEL = "Automática (recomendada)";
+
+    private final Context context;
+    private final Handler ui;
+    private final Listener listener;
+    private final ExecutorService worker = Executors.newSingleThreadExecutor();
+    private final ArrayBlockingQueue<Piece> ready = new ArrayBlockingQueue<Piece>(CACHE_PIECES);
+    private final ArrayList<Mpd.Rep> videoReps = new ArrayList<Mpd.Rep>();
+    private final ArrayList<Mpd.Rep> audioReps = new ArrayList<Mpd.Rep>();
+    /** Trozos pendientes de descargar, en el hilo de trabajo: {número, tiempo}. */
+    private final ArrayList<long[]> plan = new ArrayList<long[]>();
+
+    private volatile boolean released;
+    private volatile boolean paused;
+    private volatile boolean restartRequested;
+    private volatile boolean stopped;
+
+    private Mpd mpd;
+    private Mpd.Rep selectedVideo;
+    private Mpd.Rep selectedAudio;
+    private int qualityIndex;
+    private int requestedQuality = -1;
+    /** false = Automática (la app elige); true = la resolución la eligió la persona. */
+    private volatile boolean manualQuality;
+    /** Último aviso preciso sobre la calidad elegida. */
+    private volatile String qualityNotice = "";
+    /** Avance extra del punto de petición cuando el directo va por delante del reloj. */
+    private int liveSkip;
+    /** Resolución que el teléfono no pudo decodificar y a la que se volvió. */
+    private volatile String qualityFallback = "";
+    private String sourceUrl = "";
+    private Map<String, String> headers = new TreeMap<String, String>();
+    private Surface surface;
+    private File cacheDir;
+    private byte[] videoInit;
+    private byte[] audioInit;
+    /** Lista de tiempos de la pista de audio: puede no coincidir con la de vídeo. */
+    private ArrayList<long[]> audioTimeline;
+    private boolean videoInitFailed;
+    private boolean audioInitFailed;
+
+    private final Slot slotA = new Slot();
+    private final Slot slotB = new Slot();
+    private Slot active;
+    private Slot pending;
+
+    private int videoWidth;
+    private int videoHeight;
+    private boolean firstPieceStarted;
+    private int consecutiveErrors;
+    private long lastNumber = -1;
+    private long playClockMs;
+    private long activeStartMs = -1;
+    private boolean singleFileMode;
+
+    /** Momento en el que empezó este intento (para el vigilante de "sin imagen"). */
+    private long startedAtMs;
+    /** Último resultado HTTP anotado: permite explicar por qué no llega la imagen. */
+    private volatile String lastHttpNote = "";
+    /** Etapa que se está pidiendo ahora mismo (manifiesto, datos iniciales, trozo...). */
+    private volatile String stage = "manifiesto";
+    /** Resultados HTTP por etapa, para poder decir exactamente qué falló. */
+    private final ArrayList<String> httpNotes = new ArrayList<String>();
+    /** Lo que se vio por dentro del último trozo comprobado. */
+    private volatile String lastCheckNote = "";
+    /** false cuando unir audio y vídeo ha dado un archivo que el teléfono rechaza. */
+    private boolean muxEnabled = true;
+    /** El códec de la calidad elegida ya se comprobó contra los decodificadores del teléfono. */
+    private boolean codecChecked;
+    /** Calidades ya descartadas por falta de decodificador, para no dar vueltas. */
+    private final ArrayList<Integer> triedQualities = new ArrayList<Integer>();
+    /** Trozos seguidos que ya no existen en el servidor (recolocación en directo). */
+    private int missingStreak;
+    /** Descargas lentas seguidas: si se acumulan, se baja de calidad. */
+    private int slowStreak;
+    /** Trozos pedidos en total y sin imagen todavía, para el mensaje de fallo. */
+    private int piecesBuilt;
+
+    private final Runnable tick = new Runnable() {
+        @Override
+        public void run() {
+            try {
+                step();
+            } catch (Throwable t) {
+                Diag.add("DASH · aviso del reproductor: " + Net.describe(t));
+            } finally {
+                if (!released) ui.postDelayed(this, TICK_MS);
+            }
+        }
+    };
+
+    DashPlayer(Context context, Handler ui, Listener listener) {
+        this.context = context.getApplicationContext();
+        this.ui = ui;
+        this.listener = listener;
+        releaseCache();
+    }
+
+    // ------------------------------------------------------------------ mando
+
+    /** Empieza a reproducir un manifiesto DASH. */
+    void start(String mpdUrl, Map<String, String> httpHeaders) {
+        start(mpdUrl, httpHeaders, -1);
+    }
+
+    /**
+     * Empieza a reproducir un manifiesto DASH.
+     *
+     * @param preferredQuality resolución pedida antes de arrancar (0 y siguientes,
+     *                         en el mismo orden que el menú CALIDAD; -1 = automática).
+     *                         Se usa cuando la persona elige la calidad antes de que
+     *                         el motor esté en marcha (por ejemplo en un canal que se
+     *                         estaba reproduciendo con el reproductor del sistema).
+     */
+    void start(String mpdUrl, Map<String, String> httpHeaders, int preferredQuality) {
+        released = false;
+        stopped = false;
+        paused = false;
+        restartRequested = false;
+        sourceUrl = mpdUrl == null ? "" : mpdUrl;
+        headers = httpHeaders == null ? new TreeMap<String, String>() : new TreeMap<String, String>(httpHeaders);
+        lastNumber = -1;
+        firstPieceStarted = false;
+        consecutiveErrors = 0;
+        playClockMs = System.currentTimeMillis();
+        activeStartMs = -1;
+        singleFileMode = false;
+        muxEnabled = true;
+        codecChecked = false;
+        manualQuality = preferredQuality >= 0;
+        qualityIndex = preferredQuality >= 0 ? preferredQuality : 0;
+        requestedQuality = preferredQuality;
+        qualityNotice = "";
+        qualityFallback = "";
+        liveSkip = 0;
+        triedQualities.clear();
+        lastCheckNote = "";
+        lastHttpNote = "";
+        stage = "manifiesto";
+        synchronized (this) {
+            httpNotes.clear();
+        }
+        ui.post(tick);
+        worker.execute(new Runnable() {
+            @Override
+            public void run() {
+                runEngine();
+            }
+        });
+    }
+
+    void setSurface(Surface value) {
+        surface = value;
+        applySurface(slotA);
+        applySurface(slotB);
+    }
+
+    boolean isPlaying() {
+        return !paused && !stopped && (singleFileMode || active != null || !ready.isEmpty());
+    }
+
+    boolean isSingleFile() {
+        return singleFileMode;
+    }
+
+    void setPaused(boolean value) {
+        paused = value;
+        if (singleFileMode) {
+            MediaPlayer player = active != null ? active.player : null;
+            if (player != null) {
+                try {
+                    if (value) player.pause();
+                    else player.start();
+                } catch (Throwable ignored) {
+                }
+            }
+            return;
+        }
+        Slot slot = active;
+        if (slot != null && slot.player != null) {
+            try {
+                if (value) slot.player.pause();
+                else slot.player.start();
+            } catch (Throwable ignored) {
+            }
+        }
+    }
+
+    void release() {
+        released = true;
+        stopped = true;
+        restartRequested = false;
+        ui.removeCallbacks(tick);
+        worker.shutdownNow();
+        clearSlots();
+        try {
+            worker.awaitTermination(300, java.util.concurrent.TimeUnit.MILLISECONDS);
+        } catch (Throwable ignored) {
+        }
+        drainQueue();
+        releaseCache();
+    }
+
+    // -------------------------------------------------------------- calidades
+
+    int qualityCount() {
+        ArrayList<Mpd.Rep> reps = qualitySnapshot();
+        return reps.isEmpty() ? 0 : reps.size() + 1;
+    }
+
+    /** Copia de las calidades del manifiesto (el manifiesto se lee en otro hilo). */
+    private synchronized ArrayList<Mpd.Rep> qualitySnapshot() {
+        return new ArrayList<Mpd.Rep>(videoReps);
+    }
+
+    String qualityLabel(int index) {
+        ArrayList<Mpd.Rep> reps = qualitySnapshot();
+        if (index == 0 && !reps.isEmpty()) return AUTOMATIC_LABEL;
+        int rep = index - 1;
+        if (rep < 0 || rep >= reps.size()) return "";
+        return reps.get(rep).label();
+    }
+
+    int qualityIndex() {
+        ArrayList<Mpd.Rep> reps = qualitySnapshot();
+        if (reps.isEmpty()) return 0;
+        if (!manualQuality) return 0;
+        int index = qualityIndex;
+        if (index < 0) index = 0;
+        if (index >= reps.size()) index = reps.size() - 1;
+        return index + 1;
+    }
+
+    /** true si el manifiesto ofrece una sola resolución (no hay nada que elegir). */
+    boolean hasSingleQuality() {
+        return qualitySnapshot().size() == 1;
+    }
+
+    /** Texto exacto para cuando el canal solo ofrece una resolución. */
+    String singleQualityMessage() {
+        ArrayList<Mpd.Rep> reps = qualitySnapshot();
+        if (reps.size() != 1) return "";
+        return "Este canal solo ofrece una resolución: " + reps.get(0).label()
+                + ".\n\nLENY TV la reproduce directamente y no hay otra que elegir. Si el canal tuviera"
+                + " más calidades, aparecerían aquí al leer su manifiesto .mpd.";
+    }
+
+    /** Resolución que se está usando ahora mismo, en texto corto. */
+    String currentQualityText() {
+        Mpd.Rep rep = selectedVideo;
+        if (rep == null) return "";
+        return rep.label() + (manualQuality ? " (elegida)" : " (automática)");
+    }
+
+    /**
+     * Aplica la resolución elegida en el menú CALIDAD.
+     *
+     * @param position 0 = Automática; 1 y siguientes = las calidades del manifiesto,
+     *                 en el mismo orden en que las muestra el menú.
+     * @return aviso preciso para la persona (cadena vacía si no hace falta).
+     */
+    String setQuality(int position) {
+        qualityNotice = "";
+        ArrayList<Mpd.Rep> reps = qualitySnapshot();
+        if (reps.isEmpty()) {
+            qualityNotice = "El manifiesto DASH todavía no ha entregado sus resoluciones."
+                    + " Espera a que aparezca la imagen y vuelve a abrir CALIDAD.";
+            return qualityNotice;
+        }
+        if (position == 0) {
+            if (!manualQuality) {
+                return firstPieceStarted ? "" : "Se usará la calidad automática en cuanto empiece la imagen.";
+            }
+            manualQuality = false;
+            requestedQuality = -1;
+            qualityFallback = "";
+            Diag.add("DASH · calidad automática: la app elige la mejor resolución posible del canal");
+            qualityNotice = "Calidad automática: LENY TV elige la mejor resolución que tu teléfono"
+                    + " y tu conexión puedan con este canal.";
+            if (!released) restartRequested = true;
+            return qualityNotice;
+        }
+        int index = position - 1;
+        if (index >= reps.size()) {
+            qualityNotice = "Esa resolución ya no está en el manifiesto del canal."
+                    + " Vuelve a abrir CALIDAD para ver las que ofrece ahora.";
+            return qualityNotice;
+        }
+        Mpd.Rep rep = reps.get(index);
+        if (manualQuality && index == qualityIndex && firstPieceStarted) {
+            return "Ya estabas viendo " + rep.label() + ".";
+        }
+        manualQuality = true;
+        qualityFallback = "";
+        requestedQuality = index;
+        qualityIndex = index;
+        boolean canDecode = decodable(rep);
+        if (!canDecode) {
+            qualityNotice = "Tu teléfono no declara decodificador para " + rep.label()
+                    + ". Se intentará igualmente; si no puede, LENY TV volverá a una resolución compatible.";
+        }
+        Diag.add("DASH · resolución elegida a mano: " + rep.label()
+                + " · ¿el teléfono puede decodificarla? " + (canDecode ? "sí" : "no, según el manifiesto"));
+        if (!released) restartRequested = true;
+        return qualityNotice;
+    }
+
+    /** Descripción del manifiesto y de la pista elegida, para el registro. */
+    String statusLine() {
+        StringBuilder sb = new StringBuilder("DASH");
+        if (mpd != null) {
+            sb.append(" · ").append(mpd.dynamic ? "en directo" : "bajo demanda");
+            if (selectedVideo != null && selectedVideo.height > 0) {
+                sb.append(" · ").append(selectedVideo.width).append("×").append(selectedVideo.height);
+                String codec = selectedVideo.codecName();
+                if (codec.length() > 0) sb.append(" ").append(codec);
+            }
+            if (selectedAudio != null) {
+                String codec = selectedAudio.codecName();
+                if (codec.length() > 0) sb.append(" · audio ").append(codec);
+            }
+            sb.append(" · ").append(videoReps.size())
+                    .append(videoReps.size() == 1 ? " calidad" : " calidades");
+            if (videoReps.size() > 1) {
+                sb.append(manualQuality ? " · resolución elegida a mano" : " · calidad automática");
+            }
+            if (qualityFallback.length() > 0) sb.append(" · ").append(qualityFallback);
+        }
+        return sb.toString();
+    }
+
+    /** Texto del reloj: en directo, el tiempo que lleva viéndose; si no, posición y duración. */
+    String timeText() {
+        if (singleFileMode) {
+            MediaPlayer player = active != null ? active.player : null;
+            if (player == null) return "--:--";
+            try {
+                int duration = player.getDuration();
+                int position = Math.max(0, player.getCurrentPosition());
+                if (duration > 0) return format(position) + " / " + format(duration);
+                return "EN DIRECTO " + format(position);
+            } catch (Throwable t) {
+                return "--:--";
+            }
+        }
+        long positionMs = positionMs();
+        if (mpd != null && mpd.dynamic) return "EN DIRECTO " + format(positionMs);
+        long totalMs = mpd == null ? 0 : mpd.mediaDurationMs;
+        if (totalMs > 0) return format(positionMs) + " / " + format(totalMs);
+        return format(positionMs);
+    }
+
+    long positionMs() {
+        long base = activeStartMs >= 0 ? activeStartMs : 0;
+        if (base <= 0) {
+            // Sin pistas de la duración del trozo: se cuenta el tiempo desde que empezó.
+            return System.currentTimeMillis() - playClockMs;
+        }
+        MediaPlayer player = active != null ? active.player : null;
+        if (player != null) {
+            try {
+                int inside = player.getCurrentPosition();
+                if (inside > 0) return base + inside;
+            } catch (Throwable ignored) {
+            }
+        }
+        return base;
+    }
+
+    static String format(long millis) {
+        if (millis < 0) millis = 0;
+        long seconds = millis / 1000;
+        long hours = seconds / 3600;
+        long minutes = (seconds % 3600) / 60;
+        long rest = seconds % 60;
+        if (hours > 0) return String.format(Locale.US, "%d:%02d:%02d", hours, minutes, rest);
+        return String.format(Locale.US, "%d:%02d", minutes, rest);
+    }
+
+    // ------------------------------------------------------------- el motor
+
+    private void runEngine() {
+        while (!released) {
+            try {
+                runPipeline();
+                return;
+            } catch (RestartSignal restart) {
+                Diag.add("DASH · se vuelve a empezar para aplicar el cambio de calidad");
+            } catch (FatalError fatal) {
+                fail(fatal.title, fatal.getMessage());
+                return;
+            } catch (Cancelled cancelled) {
+                return;
+            } catch (Throwable t) {
+                fail("No se pudo reproducir el canal DASH", explain(t));
+                return;
+            }
+        }
+    }
+
+    @SuppressWarnings("serial")
+    private static final class RestartSignal extends RuntimeException {
+        RestartSignal() {
+            super("reinicio");
+        }
+    }
+
+    private static final class Cancelled extends RuntimeException {
+        Cancelled() {
+            super("cancelado");
+        }
+    }
+
+    private synchronized void adoptReps(Mpd manifest) {
+        videoReps.clear();
+        videoReps.addAll(manifest.videoReps());
+        audioReps.clear();
+        audioReps.addAll(manifest.audioReps());
+    }
+<<<<<< FIN PARCIAL DE LA PARTE 16: el archivo continua en la PARTE 17 >>>>>>
+
+
+FIN DE LA PARTE 16. El resto de DashPlayer.java esta en la parte 17.

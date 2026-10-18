@@ -1,0 +1,289 @@
+LENY TV 1.55 — PARTE 38 DE LA EXPORTACION DEL CODIGO FUENTE
+===========================================================
+Contenido LITERAL. Continuacion de PlayerActivity.java (se pega JUSTO DETRAS de
+la parte 37, sin repetir lineas).
+Ruta original: src/main/java/com/pocketbuilder/app_wslenytv1792177359057/PlayerActivity.java
+
+
+<<<<<< CONTINUACION: src/main/java/com/pocketbuilder/app_wslenytv1792177359057/PlayerActivity.java >>>>>>
+    private View buildGesturePanel() {
+        gesturePanel = new LinearLayout(this);
+        gesturePanel.setOrientation(LinearLayout.VERTICAL);
+        gesturePanel.setBackground(Ui.rounded(this, 0xD9000000, 10f));
+        gesturePanel.setPadding(Ui.dpi(this, 14), Ui.dpi(this, 12), Ui.dpi(this, 14), Ui.dpi(this, 12));
+        gesturePanel.setVisibility(View.GONE);
+        gestureLabel = Ui.text(this, "VOLUMEN  50%", 13f, Ui.TEXT, true);
+        gesturePanel.addView(gestureLabel);
+        gestureBar = new ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal);
+        gestureBar.setMax(100);
+        gestureBar.setProgress(50);
+        gestureBar.setProgressTintList(ColorStateList.valueOf(Ui.RED));
+        LinearLayout.LayoutParams barParams = new LinearLayout.LayoutParams(
+                Ui.dpi(this, 200), Ui.dpi(this, 10));
+        barParams.topMargin = Ui.dpi(this, 8);
+        gesturePanel.addView(gestureBar, barParams);
+        FrameLayout.LayoutParams params = new FrameLayout.LayoutParams(
+                LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT);
+        // El aviso de volumen/brillo se muestra arriba para no tapar los controles.
+        params.gravity = Gravity.TOP | Gravity.CENTER_HORIZONTAL;
+        params.topMargin = Ui.dpi(this, 96);
+        gesturePanel.setLayoutParams(params);
+        return gesturePanel;
+    }
+
+    private FrameLayout buildDrawer() {
+        final FrameLayout holder = new FrameLayout(this);
+        // REVISIÓN 52: velo aún más suave, para que el canal se siga viendo mientras
+        // se elige otro (el usuario pidió un fondo más transparente).
+        holder.setBackgroundColor(0x1A000000);
+        holder.setVisibility(View.GONE);
+        holder.setClickable(true);
+        holder.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                closeDrawer();
+            }
+        });
+
+        LinearLayout panel = new LinearLayout(this);
+        panel.setOrientation(LinearLayout.VERTICAL);
+        // REVISIÓN 51: fondo oscuro pero translúcido (deja ver el vídeo detrás),
+        // como en la captura 3, en vez del bloque opaco anterior.
+        android.graphics.drawable.GradientDrawable shell = new android.graphics.drawable.GradientDrawable();
+        // REVISIÓN 52: el usuario pidió el fondo del panel MÁS transparente todavía:
+        // antes 0xE0 (88 % opaco), ahora 0x99 (60 %), así se intuye el vídeo detrás.
+        shell.setColor(0x990A0A12);
+        float corner = Ui.dp(this, 10f);
+        shell.setCornerRadii(new float[]{0f, 0f, corner, corner, corner, corner, 0f, 0f});
+        panel.setBackground(shell);
+        panel.setPadding(Ui.dpi(this, 12), Ui.dpi(this, 12), Ui.dpi(this, 12), Ui.dpi(this, 12));
+        panel.setClickable(true);
+
+        LinearLayout header = new LinearLayout(this);
+        header.setOrientation(LinearLayout.HORIZONTAL);
+        header.setGravity(Gravity.CENTER_VERTICAL);
+        TextView title = Ui.text(this, "CANALES", 14f, Ui.RED, true);
+        title.setLetterSpacing(0.12f);
+        header.addView(title, new LinearLayout.LayoutParams(0,
+                LinearLayout.LayoutParams.WRAP_CONTENT, 1f));
+        drawerCount = Ui.text(this, "", 10f, Ui.TEXT_MUTED, false);
+        header.addView(drawerCount);
+        TextView close = Ui.iconButton(this, Icons.close(this, Ui.TEXT), "Cerrar la lista de canales", 38f);
+        LinearLayout.LayoutParams closeParams = new LinearLayout.LayoutParams(
+                Ui.dpi(this, 38), Ui.dpi(this, 38));
+        closeParams.leftMargin = Ui.dpi(this, 8);
+        close.setLayoutParams(closeParams);
+        close.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                closeDrawer();
+            }
+        });
+        header.addView(close);
+        panel.addView(header);
+
+        // REVISIÓN 51: apartados elegibles DENTRO del propio panel de canales.
+        TextView sectionsLabel = Ui.text(this, "APARTADOS", 9.5f, Ui.TEXT_MUTED, true);
+        sectionsLabel.setLetterSpacing(0.12f);
+        sectionsLabel.setPadding(0, Ui.dpi(this, 10), 0, Ui.dpi(this, 4));
+        panel.addView(sectionsLabel);
+
+        android.widget.HorizontalScrollView sectionScroller =
+                new android.widget.HorizontalScrollView(this);
+        sectionScroller.setHorizontalScrollBarEnabled(false);
+        drawerSectionRow = new LinearLayout(this);
+        drawerSectionRow.setOrientation(LinearLayout.HORIZONTAL);
+        sectionScroller.addView(drawerSectionRow);
+        panel.addView(sectionScroller, new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT));
+
+        drawerAdapter = new DrawerAdapter();
+        drawerList = new ListView(this);
+        drawerList.setAdapter(drawerAdapter);
+        drawerList.setDivider(null);
+        drawerList.setDividerHeight(Ui.dpi(this, 4));
+        drawerList.setOnItemClickListener(new AdapterView.OnItemClickListener() {
+            @Override
+            public void onItemClick(AdapterView<?> parent, View view, int position, long id) {
+                int target = channelIndexAt(position);
+                if (target < 0) return;
+                closeDrawer();
+                playIndex(target);
+            }
+        });
+        LinearLayout.LayoutParams listParams = new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f);
+        listParams.topMargin = Ui.dpi(this, 8);
+        panel.addView(drawerList, listParams);
+
+        TextView note = Ui.text(this, "El canal que estás viendo aparece marcado.", 10f, Ui.TEXT_MUTED, false);
+        note.setPadding(0, Ui.dpi(this, 6), 0, 0);
+        panel.addView(note);
+
+        // El panel de canales también se ajusta al ancho real de la pantalla.
+        int drawerWidth = Math.min(Ui.dpi(this, 340),
+                getResources().getDisplayMetrics().widthPixels - Ui.dpi(this, 24));
+        FrameLayout.LayoutParams panelParams = new FrameLayout.LayoutParams(
+                Math.max(Ui.dpi(this, 220), drawerWidth), FrameLayout.LayoutParams.MATCH_PARENT, Gravity.START);
+        holder.addView(panel, panelParams);
+        return holder;
+    }
+
+    private TextView barPlate(String label, String description, View.OnClickListener listener) {
+        TextView b = Ui.text(this, label, 13f, Ui.TEXT, true);
+        b.setAllCaps(true);
+        b.setLetterSpacing(0.06f);
+        b.setGravity(Gravity.CENTER);
+        b.setContentDescription(description);
+        b.setMinWidth(Ui.dpi(this, 52));
+        b.setMinHeight(Ui.dpi(this, 44));
+        b.setPadding(Ui.dpi(this, 12), Ui.dpi(this, 10), Ui.dpi(this, 12), Ui.dpi(this, 10));
+        b.setBackground(Ui.buttonBg(this, 0x88000000, 0xCCE13A2B, 0x66F4F4F8, 6f));
+        b.setClickable(true);
+        b.setFocusable(true);
+        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT);
+        lp.leftMargin = Ui.dpi(this, 6);
+        b.setLayoutParams(lp);
+        b.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                scheduleHide();
+            }
+        });
+        // El listener real se añade después (setOnClickListener lo sustituye).
+        b.setOnClickListener(new HideThenRun(listener));
+        return b;
+    }
+
+    private final class HideThenRun implements View.OnClickListener {
+        private final View.OnClickListener real;
+
+        HideThenRun(View.OnClickListener real) {
+            this.real = real;
+        }
+
+        @Override
+        public void onClick(View v) {
+            scheduleHide();
+            if (real != null) real.onClick(v);
+        }
+    }
+
+    // --------------------------------------------------------------- controles
+
+    private void setControlsVisible(boolean visible) {
+        controlsVisible = visible;
+        if (topBar == null) return;
+        if (locked) {
+            topBar.setVisibility(View.GONE);
+            bottomBar.setVisibility(View.GONE);
+            lockButton.setVisibility(View.VISIBLE);
+            ui.removeCallbacks(hideControls);
+            return;
+        }
+        topBar.setVisibility(visible ? View.VISIBLE : View.GONE);
+        bottomBar.setVisibility(visible ? View.VISIBLE : View.GONE);
+        lockButton.setVisibility(visible ? View.VISIBLE : View.GONE);
+        if (visible) scheduleHide();
+        else ui.removeCallbacks(hideControls);
+    }
+
+    private void toggleControls() {
+        if (locked) return;
+        setControlsVisible(!controlsVisible);
+    }
+
+    private void scheduleHide() {
+        ui.removeCallbacks(hideControls);
+        int seconds = AppPrefs.hideDelaySeconds(this);
+        if (seconds <= 0 || locked || isPanelOpen()) return;
+        ui.postDelayed(hideControls, seconds * 1000L);
+    }
+
+    private boolean isPanelOpen() {
+        boolean drawer = drawerHolder != null && drawerHolder.getVisibility() == View.VISIBLE;
+        boolean message = messageHolder != null && messageHolder.getVisibility() == View.VISIBLE;
+        boolean settings = settingsHolder != null && settingsHolder.getVisibility() == View.VISIBLE;
+        boolean choice = choiceHolder != null && choiceHolder.getVisibility() == View.VISIBLE;
+        return drawer || message || settings || choice;
+    }
+
+    private void toggleLock() {
+        locked = !locked;
+        if (locked) {
+            closeDrawer();
+            closeChoice();
+            closeSettings();
+            hideMessage();
+        }
+        setButtonIcon(lockButton, Icons.lock(this, Ui.TEXT, locked));
+        lockButton.setContentDescription(locked ? "Desbloquear la pantalla" : "Bloquear la pantalla");
+        setControlsVisible(!locked);
+        if (locked) {
+            topBar.setVisibility(View.GONE);
+            bottomBar.setVisibility(View.GONE);
+            lockButton.setVisibility(View.VISIBLE);
+            lockButton.setAlpha(0.85f);
+        } else {
+            toast("Pantalla desbloqueada");
+        }
+    }
+
+    private void applyImmersive(boolean enable) {
+        immersive = enable;
+        if (enable) {
+            Immersion.apply(this);
+        } else {
+            Immersion.showBars(this);
+        }
+        if (fullscreenButton != null) {
+            setButtonIcon(fullscreenButton,
+                    enable ? Icons.contract(this, Ui.TEXT) : Icons.expand(this, Ui.TEXT));
+            fullscreenButton.setContentDescription(enable ? "Mostrar las barras del sistema" : "Pantalla completa");
+        }
+    }
+
+    @Override
+    public void onWindowFocusChanged(boolean hasFocus) {
+        super.onWindowFocusChanged(hasFocus);
+        if (hasFocus && immersive) applyImmersive(true);
+    }
+
+    /**
+     * Reparte los márgenes de la zona de la cámara frontal solo entre los
+     * controles: el vídeo y el fondo siguen ocupando toda la pantalla.
+     */
+    private void applyControlInsets(int left, int top, int right, int bottom) {
+        if (left == insetLeft && top == insetTop && right == insetRight && bottom == insetBottom) return;
+        insetLeft = left;
+        insetTop = top;
+        insetRight = right;
+        insetBottom = bottom;
+        if (topBar != null) {
+            topBar.setPadding(Ui.dpi(this, 10) + left, Ui.dpi(this, 8) + top,
+                    Ui.dpi(this, 10) + right, Ui.dpi(this, 10));
+        }
+        if (bottomBar != null) {
+            bottomBar.setPadding(Ui.dpi(this, 10) + left, Ui.dpi(this, 10),
+                    Ui.dpi(this, 10) + right, Ui.dpi(this, 8) + bottom);
+        }
+        if (lockButton != null) {
+            ViewGroup.LayoutParams raw = lockButton.getLayoutParams();
+            if (raw instanceof FrameLayout.LayoutParams) {
+                FrameLayout.LayoutParams params = (FrameLayout.LayoutParams) raw;
+                params.rightMargin = Ui.dpi(this, 6) + right;
+                params.bottomMargin = Ui.dpi(this, 14) + bottom;
+                lockButton.setLayoutParams(params);
+            }
+        }
+        applyAspect();
+    }
+
+    private void applyKeepScreenOn() {
+        if (AppPrefs.keepScreenOn(this)) {
+            getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
+        } else {
+            getWindow().clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
+        }
+    }

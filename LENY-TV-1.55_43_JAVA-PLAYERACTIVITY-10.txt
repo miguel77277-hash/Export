@@ -1,0 +1,197 @@
+LENY TV 1.55 — PARTE 43 DE LA EXPORTACION DEL CODIGO FUENTE
+===========================================================
+Contenido LITERAL. Continuacion de PlayerActivity.java (se pega JUSTO DETRAS de
+la parte 42, sin repetir lineas).
+Ruta original: src/main/java/com/pocketbuilder/app_wslenytv1792177359057/PlayerActivity.java
+
+
+<<<<<< CONTINUACION: src/main/java/com/pocketbuilder/app_wslenytv1792177359057/PlayerActivity.java >>>>>>
+    /**
+     * Menú CALIDAD para un canal que NO está pasando por el motor DASH.
+     *
+     * Antes solo se podían mirar las pistas que entrega el reproductor de Android y,
+     * cuando resumía todo en una sola pista, el menú contestaba que el flujo «no
+     * ofrece varias pistas de vídeo» aunque el enlace tuviera varias calidades. Ahora
+     * se lee el propio enlace (manifiesto DASH o lista maestra HLS) en segundo plano
+     * y se muestran las resoluciones que de verdad ofrece, con «Automática» como
+     * primera opción.
+     */
+    private void openStreamQualityPanel() {
+        final Channel channel = currentChannel();
+        final String url = channel == null ? "" : channel.url;
+        final Map<String, String> headers = channelHeaders(channel);
+        // Un archivo suelto (.mp4, .webm, .ts) no es una lista de calidades: no se
+        // descarga solo para comprobarlo.
+        String type = FormatDetector.fromUrl(url);
+        if (FormatDetector.MP4.equals(type) || FormatDetector.WEBM.equals(type)
+                || FormatDetector.TS.equals(type)) {
+            if (openPlayerTrackPanel()) return;
+            showMessage("Calidad", "Este canal es un archivo de vídeo con una sola calidad: LENY TV la"
+                    + " reproduce directamente y no hay otras para elegir.", false);
+            return;
+        }
+        showMessage("Calidad", "Leyendo las calidades que ofrece el canal…", false);
+        setBuffering(true);
+        try {
+            background.execute(new Runnable() {
+                @Override
+                public void run() {
+                    final StreamQuality.Result result = StreamQuality.inspect(url, headers);
+                    ui.post(new Runnable() {
+                        @Override
+                        public void run() {
+                            if (isFinishing() || isDestroyed()) return;
+                            setBuffering(false);
+                            hideMessage();
+                            showStreamQuality(result);
+                        }
+                    });
+                }
+            });
+        } catch (Throwable t) {
+            setBuffering(false);
+            Diag.add("Reproductor · no se pudieron leer las calidades del canal: " + Net.describe(t));
+            showMessage("Calidad", "No se pudieron leer las calidades del canal: " + describe(t) + ".", false);
+        }
+    }
+
+    /** Muestra el resultado de leer el enlace: calidades reales o el motivo. */
+    private void showStreamQuality(StreamQuality.Result result) {
+        if (result == null) return;
+        if (result.multiple()) {
+            String[] labels = new String[result.options.size() + 1];
+            labels[0] = StreamQuality.AUTOMATIC_LABEL;
+            int selected = 0;
+            for (int i = 0; i < result.options.size(); i++) {
+                StreamQuality.Option option = result.options.get(i);
+                labels[i + 1] = option.label;
+                if (option.dash) {
+                    if (preferredDashQuality >= 0 && option.dashIndex == preferredDashQuality) {
+                        selected = i + 1;
+                    }
+                } else if (variantUrl.length() > 0 && option.url.equals(variantUrl)) {
+                    selected = i + 1;
+                }
+            }
+            final StreamQuality.Result found = result;
+            showChoicePanel("CALIDAD DEL CANAL", labels, selected, new ChoiceListener() {
+                @Override
+                public void onChoice(int position) {
+                    closeChoice();
+                    if (position <= 0) {
+                        boolean wasChosen = variantUrl.length() > 0 || variantLabel.length() > 0
+                                || preferredDashQuality >= 0;
+                        variantUrl = "";
+                        variantLabel = "";
+                        preferredDashQuality = -1;
+                        if (!wasChosen) {
+                            toast("Ya se está usando la calidad automática");
+                            return;
+                        }
+                        toast("Calidad: " + StreamQuality.AUTOMATIC_LABEL);
+                        startPlayback();
+                        return;
+                    }
+                    StreamQuality.Option option = found.options.get(position - 1);
+                    if (option.dash) {
+                        variantUrl = "";
+                        variantLabel = option.label;
+                        preferredDashQuality = option.dashIndex;
+                        // El enlace ha resultado ser un manifiesto DASH: se reproduce con
+                        // el motor DASH interno, que es el único que aplica la resolución
+                        // elegida (antes podía quedarse en el reproductor del sistema).
+                        manualType = FormatDetector.DASH;
+                        typeOrigin = "";
+                    } else {
+                        variantUrl = option.url;
+                        variantLabel = option.label;
+                        preferredDashQuality = -1;
+                        // Cada calidad de una lista HLS es una lista de reproducción
+                        // normal: se reproduce con el reproductor de Android.
+                        manualType = FormatDetector.HLS;
+                        typeOrigin = "";
+                    }
+                    Diag.add("Reproductor · calidad elegida en el menú (" + found.kindText() + "): "
+                            + option.label + " · " + Diag.channelUrl(option.url.length() == 0
+                            ? currentChannel().url : option.url));
+                    toast("Calidad: " + option.label);
+                    startPlayback();
+                }
+            });
+            return;
+        }
+        if (result.options.size() == 1) {
+            showMessage("Calidad", "Este canal solo ofrece una calidad: " + result.options.get(0).label
+                    + ".\n\nLENY TV la reproduce directamente y no hay otra que elegir.", false);
+            return;
+        }
+        if (openPlayerTrackPanel()) return;
+        String note = result.note.length() == 0
+                ? "Este canal entrega una sola pista de vídeo: el reproductor usa la única calidad"
+                + " que hay y no ofrece otras para elegir." : result.note;
+        showMessage("Calidad", note, false);
+    }
+
+    /**
+     * Menú con las pistas de vídeo que sí expone el reproductor del sistema. Es el
+     * último recurso, cuando el enlace no es un manifiesto con calidades.
+     * Devuelve true si mostró algo.
+     */
+    private boolean openPlayerTrackPanel() {
+        if (player == null || !prepared) return false;
+        MediaPlayer.TrackInfo[] infos = null;
+        try {
+            infos = player.getTrackInfo();
+        } catch (Exception ignored) {
+        }
+        trackIndexes.clear();
+        final ArrayList<String> labels = new ArrayList<String>();
+        if (infos != null) {
+            for (int i = 0; i < infos.length; i++) {
+                MediaPlayer.TrackInfo info = infos[i];
+                if (info == null) continue;
+                if (info.getTrackType() != MediaPlayer.TrackInfo.MEDIA_TRACK_TYPE_VIDEO) continue;
+                trackIndexes.add(Integer.valueOf(i));
+                labels.add(describeTrack(info));
+            }
+        }
+        if (labels.isEmpty()) return false;
+        labels.add(0, "Automático (reiniciar el flujo)");
+        showChoicePanel("CALIDAD DE VÍDEO", labels.toArray(new String[labels.size()]), 0, new ChoiceListener() {
+            @Override
+            public void onChoice(int position) {
+                closeChoice();
+                if (position == 0) {
+                    restartPlayback();
+                    return;
+                }
+                int trackIndex = trackIndexes.get(position - 1).intValue();
+                try {
+                    if (player != null) player.selectTrack(trackIndex);
+                    toast("Calidad cambiada");
+                } catch (Exception e) {
+                    toast("No se pudo cambiar la calidad en este flujo");
+                }
+            }
+        });
+        return true;
+    }
+
+    private String describeTrack(MediaPlayer.TrackInfo info) {
+        String label = "Pista de vídeo";
+        try {
+            MediaFormat format = info.getFormat();
+            if (format != null) {
+                int height = format.containsKey(MediaFormat.KEY_HEIGHT) ? format.getInteger(MediaFormat.KEY_HEIGHT) : 0;
+                int width = format.containsKey(MediaFormat.KEY_WIDTH) ? format.getInteger(MediaFormat.KEY_WIDTH) : 0;
+                if (height > 0) label = height + "p";
+                else if (width > 0) label = width + " px";
+                if (format.containsKey(MediaFormat.KEY_MIME)) {
+                    String mime = format.getString(MediaFormat.KEY_MIME);
+                    if (mime != null) label = label + " · " + mime.replace("video/", "");
+                }
+            }
+        } catch (Exception ignored) {
+        }
+        return label;
+    }

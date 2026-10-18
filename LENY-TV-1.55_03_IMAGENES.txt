@@ -1,0 +1,82 @@
+================================================================================
+LENY TV 1.55 — PARTE 3: IMÁGENES Y RECURSOS GRÁFICOS
+================================================================================
+Las 4 imágenes NO se pueden meter dentro de un archivo de texto (son binarios).
+Aquí está todo lo necesario para recuperarlas o volver a generarlas.
+
+--------------------------------------------------------------------------------
+1. INVENTARIO EXACTO (medido en el proyecto del teléfono)
+--------------------------------------------------------------------------------
+Ruta original                        Tamaño      Dimensiones  Alpha
+assets/generated/app_icon.png        742.379 B   1024 x 1024  no
+assets/generated/portada.png       1.332.626 B   1376 x 768   no
+assets/generated/cover.png         1.111.118 B   1376 x 768   no
+assets/generated/fondo_rog.png     1.076.452 B   1376 x 768   no
+
+Se leen en tiempo de ejecución con:
+    context.getAssets().open("generated/<nombre>.png")
+Por tanto, en un proyecto Android Studio hay que copiarlas a:
+    src/main/assets/generated/app_icon.png
+    src/main/assets/generated/portada.png
+    src/main/assets/generated/cover.png
+    src/main/assets/generated/fondo_rog.png
+(la carpeta assets/ del proyecto es distinta de src/main/assets/: en
+PocketBuilder "assets/" ya acaba dentro de src/main/assets del APK).
+
+--------------------------------------------------------------------------------
+2. CÓMO RECUPERARLAS DEL TELÉFONO (sin generar nada nuevo)
+--------------------------------------------------------------------------------
+Están dentro de la carpeta del proyecto de PocketBuilder:
+    /storage/emulated/0/Android/data/com.pocketbuilder/files/projects/
+    <carpeta del proyecto>/assets/generated/*.png
+Android 11+ no deja abrir esa ruta con un gestor de archivos normal. Opciones
+reales:
+  a) Exportar/compartir el proyecto desde la propia app PocketBuilder (si tu
+     instalación tiene esa opción), que empaqueta la carpeta del proyecto.
+  b) Conectar el teléfono a un ordenador por USB (MTP) o usar ADB:
+        adb pull /sdcard/Android/data/com.pocketbuilder/files/projects/<proyecto>/assets/generated
+     (por ADB y con depuración USB activada sí se puede acceder a
+     Android/data; con el gestor de archivos del teléfono, no).
+  c) Las dos imágenes de referencia que enviaste en el chat también siguen
+     disponibles como archivos adjuntos del proyecto, pero NO son estos PNG.
+
+--------------------------------------------------------------------------------
+3. QUÉ ES CADA IMAGEN Y CÓMO VOLVER A GENERARLA
+--------------------------------------------------------------------------------
+Si no pudieras sacarlas, se pueden regenerar con un generador de imágenes. Estas
+son las descripciones que corresponden al diseño aprobado:
+
+app_icon.png (1024x1024, icono de lanzador)
+  Concepto: icono cuadrado tipo app de TV, fondo oscuro azul-negro con brillo
+  sutil, formas geométricas luminosas en cian/violeta que sugieran pantalla y
+  señal de emisión. Sin texto ni letras.
+
+portada.png (1376x768, fondo de la portada de bienvenida)
+  Concepto: fondo cinematográfico horizontal de estudio de TV, gradiente oscuro
+  azul-violeta con luces suaves y viñeteado, espacio vacío en el centro para el
+  logotipo y el botón ENTRAR. Sin texto.
+
+cover.png (1376x768, carátula/arte de la portada)
+  Concepto: composición horizontal de ambiente TV premium, mismo negro azulado y
+  acentos cian/violeta que el icono, brillos y formas suaves de pantalla.
+  Sin texto.
+
+fondo_rog.png (1376x768, fondo de la pantalla de canales)
+  Concepto: fondo horizontal muy oscuro con degradado sutil y textura suave, para
+  que las tarjetas y filas de canales se lean bien encima. Sin texto.
+
+Reglas del diseño aprobado (para no romperlo al regenerar): ninguna imagen lleva
+texto, todas son horizontales 16:9 salvo el icono, y la paleta es negro/azul
+profundo (#08080F de fondo) con acentos cian y violeta.
+
+--------------------------------------------------------------------------------
+4. ICONO DEL LANZADOR
+--------------------------------------------------------------------------------
+En PocketBuilder el icono instalado se genera desde assets/generated/app_icon.png.
+Fuera de PocketBuilder, con Android Studio, hay que crear los mipmap
+(mipmap-mdpi..xxxhdpi) o un icono adaptativo (adaptive-icon con
+foreground/background) usando esa misma imagen como referencia. Si se copia solo
+el PNG grande, Android lo mostrará recortado con forma de cuadrado.
+================================================================================
+FIN DE LA PARTE 3
+================================================================================

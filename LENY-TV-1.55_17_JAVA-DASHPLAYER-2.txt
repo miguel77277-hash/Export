@@ -1,0 +1,439 @@
+LENY TV 1.55 — CODIGO FUENTE REAL — PARTE 17 (MOTOR DASH, 2 de 3)
+================================================================
+Continuacion LITERAL de src/main/java/com/pocketbuilder/app_wslenytv1792177359057/DashPlayer.java
+El archivo completo son las partes 16 + 17 + 18 pegadas en ese orden.
+Esta parte empieza justo donde acaba la 16 (runPipeline) y sigue hasta startTimeMs.
+
+
+<<<<<< ARCHIVO: src/main/java/com/pocketbuilder/app_wslenytv1792177359057/DashPlayer.java (PARTE 17 de 3: continuacion) >>>>>>
+
+    private void runPipeline() throws Exception {
+        checkRestart();
+        singleFileMode = false;
+        startedAtMs = System.currentTimeMillis();
+        lastHttpNote = "";
+        piecesBuilt = 0;
+        missingStreak = 0;
+        slowStreak = 0;
+        Diag.add("DASH · pidiendo el manifiesto · cabeceras " + Net.describeHeaders(headers)
+                + " · " + Diag.channelUrl(sourceUrl));
+        stage = "manifiesto";
+        String xml;
+        try {
+            xml = new String(fetchBytes(sourceUrl, headers, 4 * 1024 * 1024), "UTF-8");
+        } catch (MissingSegment missing) {
+            lastHttpNote = missing.getMessage();
+            throw new FatalError("La dirección del manifiesto DASH no existe",
+                    "El servidor respondió: " + missing.getMessage() + ".\n\nEl enlace del canal puede"
+                            + " haber caducado o estar mal escrito. Comprueba la dirección en tu proveedor.");
+        } catch (IOException netError) {
+            throw new FatalError("No se pudo descargar el manifiesto DASH", networkReason(netError));
+        }
+        Mpd manifest;
+        try {
+            manifest = Mpd.parse(xml, sourceUrl);
+        } catch (Throwable parseError) {
+            Diag.add("DASH · el manifiesto no se pudo interpretar: " + Net.describe(parseError)
+                    + " · primeras líneas: " + Net.snippetOf(xml));
+            throw new FatalError("El manifiesto DASH no es válido",
+                    "El archivo se descargó, pero no se pudo interpretar como manifiesto DASH: "
+                            + Net.describe(parseError) + ".\n\nPrimeras líneas recibidas: "
+                            + Net.snippetOf(xml) + "\n\nSuele indicar que el enlace devuelve una página web,"
+                            + " un texto de error del proveedor o un archivo incompleto.");
+        }
+        mpd = manifest;
+        Diag.add("DASH · manifiesto leído: " + manifest.summary());
+        if (!manifest.protections.isEmpty()) {
+            for (int i = 0; i < manifest.protections.size(); i++) {
+                Diag.add("DASH · protección declarada: " + manifest.protections.get(i));
+            }
+        }
+        adoptReps(manifest);
+        if (videoReps.isEmpty() && audioReps.isEmpty()) {
+            throw new FatalError("El manifiesto DASH no trae pistas",
+                    "El archivo .mpd se descargó correctamente pero no declara ninguna pista de vídeo o audio."
+                            + " Puede ser un manifiesto incompleto o un error del proveedor.");
+        }
+        if (videoReps.isEmpty()) {
+            throw new FatalError("El manifiesto DASH solo trae audio",
+                    "Este canal no ofrece pista de vídeo en el manifiesto, así que no hay imagen que mostrar.");
+        }
+
+        if (requestedQuality >= 0 && requestedQuality < videoReps.size()) {
+            qualityIndex = requestedQuality;
+        } else if (manualQuality && qualityIndex >= 0 && qualityIndex < videoReps.size()) {
+            Diag.add("DASH · se mantiene la resolución elegida a mano: "
+                    + videoReps.get(qualityIndex).label());
+        } else {
+            qualityIndex = chooseQuality(videoReps);
+        }
+        requestedQuality = -1;
+        Mpd.Rep video = videoReps.get(qualityIndex);
+        Mpd.Rep audio = chooseAudio(audioReps);
+        selectedVideo = video;
+        selectedAudio = audio;
+        audioTimeline = audio == null ? null : Mpd.expandTimeline(audio);
+        Diag.add("DASH · calidad elegida: " + video.label() + " · "
+                + (audio == null ? "sin pista de audio aparte (el vídeo trae el sonido o no hay audio)"
+                : "audio " + audio.label()));
+
+        // ---- Protección de contenido (DRM) ----
+        // Antes se detenía el canal con solo ver un ContentProtection en el
+        // manifiesto. Ahora se comprueba la PISTA que se va a usar y, además, si sus
+        // datos traen de verdad muestras cifradas (encv/enca). Un manifiesto que
+        // declara DRM pero entrega los bytes sin cifrar ya se puede reproducir.
+        if (video.protectedContent) {
+            String system = video.protectionSystem.length() == 0
+                    ? manifest.videoProtectionSystem() : video.protectionSystem;
+            Boolean encrypted = trackLooksEncrypted(video);
+            if (encrypted == null || encrypted.booleanValue()) {
+                throw new FatalError("Canal protegido con DRM", protectedBody(manifest, system,
+                        encrypted == null));
+            }
+            Diag.add("DASH · el manifiesto declara DRM (" + system + "), pero los datos iniciales del vídeo"
+                    + " no traen muestras cifradas (no hay encv/enca): se intenta reproducir el canal");
+            EngineInfo.license("el manifiesto declara DRM (" + system + "), pero los datos llegan sin"
+                    + " cifrar · se intenta reproducir");
+        }
+        if (audio != null && audio.protectedContent) {
+            Diag.add("DASH · la pista de audio declara DRM: se reproduce el vídeo sin ese audio aparte");
+            audio = null;
+            selectedAudio = null;
+            audioTimeline = null;
+        }
+
+        if (video.singleFile) {
+            singleFileMode = true;
+            startSingleFile(video);
+            // Este tipo de manifiesto se reproduce de un solo archivo, pero la
+            // persona puede pedir otra resolución: se espera aquí (en vez de dejar
+            // el motor parado) para poder reiniciar con la elegida.
+            awaitQualityChange();
+            return;
+        }
+        if (video.media.length() == 0 && video.listUrls.isEmpty() && video.timeline.isEmpty()) {
+            throw new FatalError("El manifiesto DASH no dice cómo pedir los trozos",
+                    "El archivo .mpd no incluye plantilla de segmentos, ni lista, ni dirección de archivo único.");
+        }
+
+        videoInit = null;
+        audioInit = null;
+        videoInitFailed = false;
+        audioInitFailed = false;
+        plan.clear();
+        lastNumber = -1;
+
+        while (!released) {
+            checkRestart();
+            checkNoImageWatchdog();
+            if (plan.isEmpty()) {
+                if (!refill()) {
+                    if (mpd.dynamic) {
+                        sleepQuiet(800);
+                        continue;
+                    }
+                    ui.post(new Runnable() {
+                        @Override
+                        public void run() {
+                            if (!released) listener.onFinished();
+                        }
+                    });
+                    return;
+                }
+            }
+            if (ready.remainingCapacity() == 0) {
+                sleepQuiet(120);
+                continue;
+            }
+            long[] segment = plan.remove(0);
+            Piece piece = null;
+            long buildStart = System.currentTimeMillis();
+            try {
+                piece = buildPiece(segment[0], segment[1]);
+            } catch (Cancelled cancelled) {
+                throw cancelled;
+            } catch (MissingSegment missing) {
+                Diag.add("DASH · el trozo " + segment[0] + " no existe en el servidor · " + missing.getMessage());
+                if (mpd.dynamic) {
+                    // En directo los trozos caducan: si el teléfono se queda atrás (o su
+                    // reloj no coincide con el del servidor) hay que releer el manifiesto
+                    // y recolocarse en el trozo más reciente.
+                    missingStreak++;
+                    lastNumber = segment[0];
+                    if (missingStreak >= 2) {
+                        missingStreak = 0;
+                        // Si el directo va por delante de lo que dice el reloj del
+                        // servidor, se avanza el punto de petición en lugar de pedir
+                        // una y otra vez trozos que ya no existen.
+                        if (mpd.availabilityStartMs > 0 && selectedVideo != null
+                                && selectedVideo.timeline.isEmpty() && selectedVideo.segDuration > 0) {
+                            liveSkip += 2;
+                            if (liveSkip > 900) liveSkip = 900;
+                            Diag.add("DASH · el directo va por delante: se avanza " + liveSkip
+                                    + " trozos el punto de petición");
+                        }
+                        reloadManifest();
+                    }
+                    continue;
+                }
+                ui.post(new Runnable() {
+                    @Override
+                    public void run() {
+                        if (!released) listener.onFinished();
+                    }
+                });
+                return;
+            } catch (BadSegment bad) {
+                // El trozo llegó vacío, a medias o sin imagen utilizable. No se le
+                // entrega al reproductor (que solo diría un código sin detalle).
+                Diag.add("DASH · trozo descartado · " + bad.getMessage());
+                consecutiveErrors++;
+                if (consecutiveErrors >= 4) {
+                    throw new FatalError("El canal no entrega trozos utilizables",
+                            "Se han pedido varios trozos seguidos y ninguno llegó completo o legible.\n\n"
+                                    + bad.getMessage() + ".\n"
+                                    + "Resultados del servidor: " + httpHistory() + ".\n"
+                                    + "Cabeceras enviadas: " + Net.describeHeaders(headers) + ".");
+                }
+                continue;
+            } catch (Throwable t) {
+                Diag.add("DASH · fallo al pedir el trozo " + segment[0] + ": " + Net.describe(t));
+                consecutiveErrors++;
+                if (consecutiveErrors >= 4) {
+                    throw new FatalError("No se pudieron descargar los trozos del canal",
+                            "Se pidieron varios trozos seguidos y el servidor no los entregó.\n\n"
+                                    + MediaErrors.describeNetwork(t, headers));
+                }
+                continue;
+            }
+            piecesBuilt++;
+            checkRestart();
+            lastNumber = segment[0];
+            consecutiveErrors = 0;
+            watchSpeed(System.currentTimeMillis() - buildStart);
+            try {
+                while (!ready.offer(piece, 200, java.util.concurrent.TimeUnit.MILLISECONDS)) {
+                    if (released) {
+                        deleteQuietly(piece.file);
+                        deleteQuietly(piece.rawVideo);
+                        throw new Cancelled();
+                    }
+                    if (restartRequested) {
+                        // Se pide otra resolución: el trozo que ya no se va a usar se
+                        // borra antes de reiniciar.
+                        deleteQuietly(piece.file);
+                        deleteQuietly(piece.rawVideo);
+                        checkRestart();
+                    }
+                }
+            } catch (InterruptedException interrupted) {
+                throw new Cancelled();
+            }
+        }
+    }
+
+    /**
+     * Si el motor lleva demasiado tiempo sin conseguir reproducir ni un trozo, se
+     * corta con el motivo real (último código HTTP, trozos pedidos y cabeceras) en
+     * lugar de dejar el círculo de carga girando para siempre.
+     */
+    private void checkNoImageWatchdog() {
+        if (firstPieceStarted || singleFileMode) return;
+        if (System.currentTimeMillis() - startedAtMs < NO_IMAGE_TIMEOUT_MS) return;
+        StringBuilder body = new StringBuilder();
+        body.append("Han pasado ").append(NO_IMAGE_TIMEOUT_MS / 1000)
+                .append(" segundos sin conseguir reproducir ningún trozo del canal");
+        body.append(piecesBuilt > 0 ? " (se pidieron " + piecesBuilt + " trozos)." : " (no se llegó a pedir ningún trozo).");
+        body.append("\nResultados del servidor por etapa: ").append(httpHistory()).append('.');
+        if (lastCheckNote.length() > 0) {
+            body.append("\nÚltimo trozo comprobado: ").append(lastCheckNote).append('.');
+        }
+        if (mpd != null) {
+            body.append("\nManifiesto: ").append(mpd.dynamic ? "en directo" : "bajo demanda")
+                    .append(", trozos de ").append(selectedVideo == null ? 0 : selectedVideo.segmentMs() / 1000f)
+                    .append(" s, ").append(videoReps.size()).append(" calidades.");
+            if (selectedVideo != null && selectedVideo.timeline.isEmpty() && selectedVideo.segDuration <= 0
+                    && selectedVideo.media.length() > 0) {
+                body.append("\nEl manifiesto no indica la duración de los trozos ni su lista de tiempos:"
+                        + " el proveedor publica un índice que LENY TV no puede seguir con este enlace.");
+            }
+        }
+        body.append("\n\nCabeceras enviadas: ").append(Net.describeHeaders(headers))
+                .append(".\nSi el canal exige otras, escríbelas en AJUSTES DEL REPRODUCTOR.");
+        throw new FatalError("El canal DASH no da imagen", body.toString());
+    }
+
+    /**
+     * Vuelve a leer el manifiesto. En los canales en directo el índice cambia cada
+     * pocos segundos: releyéndolo, el motor se recoloca en el trozo más reciente en
+     * vez de pedir trozos que ya no existen.
+     */
+    private void reloadManifest() throws Exception {
+        Diag.add("DASH · el manifiesto se vuelve a leer para recolocarse en el directo");
+        String xml;
+        try {
+            xml = new String(fetchBytes(sourceUrl, headers, 4 * 1024 * 1024), "UTF-8");
+        } catch (IOException netError) {
+            throw new FatalError("El canal DASH en directo dejó de responder",
+                    "Los trozos pedidos ya no existen en el servidor y el manifiesto tampoco se pudo"
+                            + " volver a leer.\n\n" + MediaErrors.describeNetwork(netError, headers));
+        }
+        Mpd refreshed = Mpd.parse(xml, sourceUrl);
+        mpd = refreshed;
+        adoptReps(refreshed);
+        if (videoReps.isEmpty()) {
+            throw new FatalError("El manifiesto DASH se quedó sin pistas",
+                    "El canal responde, pero su manifiesto ya no declara ninguna pista de vídeo.");
+        }
+        if (qualityIndex < 0 || qualityIndex >= videoReps.size()) qualityIndex = videoReps.size() - 1;
+        selectedVideo = videoReps.get(qualityIndex);
+        selectedAudio = chooseAudio(audioReps);
+        audioTimeline = selectedAudio == null ? null : Mpd.expandTimeline(selectedAudio);
+        plan.clear();
+        lastNumber = -1;
+        videoInit = null;
+        audioInit = null;
+        videoInitFailed = false;
+        audioInitFailed = false;
+        drainQueue();
+        Diag.add("DASH · manifiesto releído: " + refreshed.summary());
+    }
+
+    /**
+     * Si los trozos tardan más en descargarse que su propia duración, la imagen se
+     * cortará: se baja automáticamente a una calidad inferior en lugar de esperar.
+     */
+    private void watchSpeed(long downloadMs) {
+        if (selectedVideo == null) return;
+        if (manualQuality) {
+            // La resolución la eligió la persona: no se cambia sola.
+            Diag.add("DASH · la descarga va lenta (" + downloadMs + " ms) pero la resolución la eligió"
+                    + " la persona: no se cambia automáticamente");
+            return;
+        }
+        long segMs = selectedVideo.segmentMs();
+        if (segMs <= 0 || downloadMs < 1200) return;
+        // Se descuenta el tiempo de unión de audio y vídeo, que no depende de la red.
+        long networkMs = downloadMs - Math.min(segMs, downloadMs / 2);
+        if (networkMs > segMs) slowStreak++;
+        else slowStreak = 0;
+        if (slowStreak < 3) return;
+        slowStreak = 0;
+        if (qualityIndex <= 0) {
+            Diag.add("DASH · la descarga va lenta (" + downloadMs + " ms por trozo de " + segMs
+                    + " ms) y ya se está usando la calidad más baja del manifiesto");
+            return;
+        }
+        requestedQuality = qualityIndex - 1;
+        Diag.add("DASH · la descarga va lenta (" + downloadMs + " ms para trozos de " + segMs
+                + " ms): se baja a la calidad " + videoReps.get(requestedQuality).label());
+        restartRequested = true;
+    }
+
+    /** Motivo real de un fallo de red, con las cabeceras que se enviaron. */
+    private String networkReason(Throwable error) {
+        String reason = MediaErrors.describeNetwork(error, headers);
+        if (lastHttpNote.length() > 0) reason = reason + "\nÚltimo resultado: " + lastHttpNote + ".";
+        return reason;
+    }
+
+    /** true si hay trozos nuevos preparados en el plan. */
+    private boolean refill() {
+        Mpd.Rep video = selectedVideo;
+        if (video == null) return false;
+        long segMs = video.segmentMs();
+
+        if (video.timeline.size() > 0) {
+            ArrayList<long[]> all = Mpd.expandTimeline(video);
+            if (all.isEmpty()) return false;
+            long firstNumber = video.startNumber;
+            int from = 0;
+            if (lastNumber < 0) {
+                from = mpd.dynamic && all.size() > LIVE_BEHIND_SEGMENTS
+                        ? all.size() - LIVE_BEHIND_SEGMENTS : 0;
+            }
+            for (int i = from; i < all.size(); i++) {
+                long number = firstNumber + i;
+                if (lastNumber < 0 || number > lastNumber) plan.add(new long[]{number, all.get(i)[0]});
+            }
+            return !plan.isEmpty();
+        }
+
+        if (!video.listUrls.isEmpty()) {
+            long firstNumber = video.startNumber;
+            for (int i = 0; i < video.listUrls.size(); i++) {
+                long number = firstNumber + i;
+                if (lastNumber < 0 || number > lastNumber) plan.add(new long[]{number, -1});
+            }
+            return !plan.isEmpty();
+        }
+
+        if (segMs <= 0) return false;
+
+        if (mpd.dynamic) {
+            long current = liveNumber(video, segMs);
+            long from = lastNumber < 0 ? current - (LIVE_BEHIND_SEGMENTS - 1) : lastNumber + 1;
+            if (current - from > 8) from = current - 2;
+            if (from < video.startNumber) from = video.startNumber;
+            for (long number = from; number <= current && plan.size() < 8; number++) {
+                // Algunos canales piden el trozo con $Time$: pasar siempre 0 devolvía
+                // la misma dirección en todos los trozos y el canal no arrancaba.
+                long time = (number - video.startNumber) * video.segDuration;
+                plan.add(new long[]{number, time});
+            }
+            return !plan.isEmpty();
+        }
+
+        long totalMs = mpd.mediaDurationMs;
+        long count = totalMs > 0 ? Math.max(1, (totalMs + segMs - 1) / segMs) : 100000;
+        long from = lastNumber < 0 ? video.startNumber : lastNumber + 1;
+        long to = video.startNumber + count - 1;
+        if (from > to) return false;
+        long limit = Math.min(to, from + 5);
+        for (long number = from; number <= limit; number++) {
+            long time = (number - video.startNumber) * video.segDuration;
+            plan.add(new long[]{number, time});
+        }
+        return !plan.isEmpty();
+    }
+
+    /** Número de trozo que corresponde al momento actual en un canal en directo. */
+    private long liveNumber(Mpd.Rep rep, long segMs) {
+        long start = rep.startNumber;
+        long elapsed = 0;
+        if (mpd.availabilityStartMs > 0) {
+            elapsed = System.currentTimeMillis() - mpd.availabilityStartMs;
+        }
+        if (elapsed < 0) elapsed = 0;
+        long number = start + (long) Math.floor(elapsed / (double) segMs) - LIVE_BEHIND_SEGMENTS + liveSkip;
+        if (mpd.timeShiftMs > 0) {
+            long oldest = start + (long) Math.floor((elapsed - mpd.timeShiftMs) / (double) segMs) + 1;
+            if (number < oldest) number = oldest;
+        }
+        return Math.max(start, number);
+    }
+
+    /**
+     * Dirección de un trozo concreto de una pista. Se apoya en Mpd.segmentUrl
+     * para que la prueba de enlace compruebe exactamente la misma dirección que
+     * pide el reproductor.
+     */
+    private String urlFor(Mpd.Rep rep, long number, long time) {
+        return Mpd.segmentUrl(rep, number, time);
+    }
+
+    private long startTimeMs(Mpd.Rep rep, long number, long time) {
+        if (time >= 0) {
+            long relative = time - rep.presentationTimeOffset;
+            // En directo el desplazamiento suele ser mayor que el tiempo del trozo:
+            // restarlo daría un tiempo negativo (reloj imposible).
+            if (relative < 0) relative = time;
+            return rep.toMs(relative);
+        }
+        if (rep.segDuration > 0) return (number - rep.startNumber) * rep.toMs(rep.segDuration);
+        return -1;
+    }
+<<<<<< FIN PARCIAL DE LA PARTE 17: el archivo continua en la PARTE 18 >>>>>>
+
+
+FIN DE LA PARTE 17. El resto de DashPlayer.java esta en la parte 18.

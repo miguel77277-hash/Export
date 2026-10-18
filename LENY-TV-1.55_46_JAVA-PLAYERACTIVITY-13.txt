@@ -1,0 +1,214 @@
+LENY TV 1.55 — PARTE 46 DE LA EXPORTACION DEL CODIGO FUENTE
+===========================================================
+Contenido LITERAL. ULTIMA parte de PlayerActivity.java: se pega JUSTO DETRAS de
+la parte 45, sin repetir lineas. Con esta parte el archivo queda COMPLETO.
+Ruta original: src/main/java/com/pocketbuilder/app_wslenytv1792177359057/PlayerActivity.java
+
+
+<<<<<< CONTINUACION (FINAL): src/main/java/com/pocketbuilder/app_wslenytv1792177359057/PlayerActivity.java >>>>>>
+    private final class DrawerAdapter extends BaseAdapter {
+        @Override
+        public int getCount() {
+            return drawerPositions.size();
+        }
+
+        @Override
+        public Object getItem(int position) {
+            int channelIndex = channelIndexAt(position);
+            return channelIndex < 0 ? null : channels.get(channelIndex);
+        }
+
+        @Override
+        public long getItemId(int position) {
+            return position;
+        }
+
+        @Override
+        public View getView(int position, View convertView, ViewGroup parent) {
+            LinearLayout row;
+            ImageView logo;
+            TextView name;
+            TextView category;
+            if (convertView instanceof LinearLayout && convertView.getTag() instanceof Object[]) {
+                row = (LinearLayout) convertView;
+                Object[] holder = (Object[]) convertView.getTag();
+                logo = (ImageView) holder[0];
+                name = (TextView) holder[1];
+                category = (TextView) holder[2];
+            } else {
+                row = new LinearLayout(PlayerActivity.this);
+                row.setOrientation(LinearLayout.HORIZONTAL);
+                row.setGravity(Gravity.CENTER_VERTICAL);
+                row.setPadding(Ui.dpi(PlayerActivity.this, 8), Ui.dpi(PlayerActivity.this, 8),
+                        Ui.dpi(PlayerActivity.this, 8), Ui.dpi(PlayerActivity.this, 8));
+
+                logo = new ImageView(PlayerActivity.this);
+                logo.setScaleType(ImageView.ScaleType.FIT_CENTER);
+                logo.setLayoutParams(new LinearLayout.LayoutParams(
+                        Ui.dpi(PlayerActivity.this, 32), Ui.dpi(PlayerActivity.this, 32)));
+                row.addView(logo);
+
+                LinearLayout texts = new LinearLayout(PlayerActivity.this);
+                texts.setOrientation(LinearLayout.VERTICAL);
+                name = Ui.text(PlayerActivity.this, "", 13f, Ui.TEXT, false);
+                name.setMaxLines(1);
+                name.setEllipsize(TextUtils.TruncateAt.END);
+                texts.addView(name);
+                category = Ui.text(PlayerActivity.this, "", 10f, Ui.TEXT_MUTED, false);
+                category.setMaxLines(1);
+                texts.addView(category);
+                LinearLayout.LayoutParams textParams = new LinearLayout.LayoutParams(0,
+                        LinearLayout.LayoutParams.WRAP_CONTENT, 1f);
+                textParams.leftMargin = Ui.dpi(PlayerActivity.this, 10);
+                row.addView(texts, textParams);
+                row.setTag(new Object[]{logo, name, category});
+            }
+            int channelIndex = channelIndexAt(position);
+            if (channelIndex < 0) return row;
+            Channel channel = channels.get(channelIndex);
+            String visibleName = Names.forDisplay(name.getPaint(), channel.name);
+            name.setText(visibleName);
+            category.setText(Names.forSection(category.getPaint(), channel.category));
+            boolean isCurrent = channelIndex == index;
+            name.setTextColor(isCurrent ? 0xFFFFFFFF : Ui.TEXT);
+            // Filas del panel también translúcidas, para que el vídeo se vea detrás.
+            row.setBackground(Ui.roundedStroke(PlayerActivity.this,
+                    isCurrent ? 0x99E13A2B : 0x5A14141C, isCurrent ? Ui.RED : 0x55242433, 1f, 8f));
+            LogoLoader.load(PlayerActivity.this, channel.logo, logo, visibleName);
+            return row;
+        }
+    }
+
+    // ------------------------------------------------------------------ ciclo de vida
+
+    @Override
+    public void surfaceCreated(SurfaceHolder holder) {
+        surface = holder.getSurface();
+        Diag.add("Reproductor · Android entregó la superficie de vídeo"
+                + (player != null ? " y se enlazó al reproductor" : " (todavía sin reproductor)"));
+        if (dash != null) dash.setSurface(surface);
+        if (player != null) {
+            try {
+                player.setSurface(surface);
+            } catch (Exception ignored) {
+            }
+        }
+    }
+
+    @Override
+    public void surfaceChanged(SurfaceHolder holder, int format, int width, int height) {
+        surface = holder.getSurface();
+        if (dash != null) dash.setSurface(surface);
+        if (player != null) {
+            try {
+                player.setSurface(surface);
+            } catch (Exception ignored) {
+            }
+        }
+        applyAspect();
+    }
+
+    @Override
+    public void surfaceDestroyed(SurfaceHolder holder) {
+        surface = null;
+        if (dash != null) dash.setSurface(null);
+        if (player != null) {
+            try {
+                player.setSurface(null);
+            } catch (Exception ignored) {
+            }
+        }
+    }
+
+    @Override
+    protected void onPause() {
+        super.onPause();
+        Immersion.stopKeeper();
+        wasPlayingBeforePause = playing;
+        ui.removeCallbacks(hideControls);
+        ui.removeCallbacks(timeTick);
+        if (dash != null && playing) {
+            dash.setPaused(true);
+            playing = false;
+            updatePlayButton();
+        }
+        if (player != null && playing) {
+            try {
+                player.pause();
+                playing = false;
+                updatePlayButton();
+            } catch (Exception ignored) {
+            }
+        }
+    }
+
+    @Override
+    protected void onResume() {
+        super.onResume();
+        applyKeepScreenOn();
+        if (immersive) Immersion.keepHidden(this);
+        if (wasPlayingBeforePause && dash != null) {
+            dash.setPaused(false);
+            playing = true;
+            updatePlayButton();
+            ui.removeCallbacks(timeTick);
+            ui.postDelayed(timeTick, 1000);
+        }
+        if (wasPlayingBeforePause && player != null && prepared) {
+            try {
+                player.start();
+                playing = true;
+                updatePlayButton();
+                ui.postDelayed(timeTick, 1000);
+            } catch (Exception ignored) {
+            }
+        }
+        wasPlayingBeforePause = false;
+        scheduleHide();
+    }
+
+    @Override
+    public void onBackPressed() {
+        if (locked) {
+            toggleLock();
+            return;
+        }
+        if (settingsHolder != null) {
+            closeSettings();
+            return;
+        }
+        if (choiceHolder != null) {
+            closeChoice();
+            return;
+        }
+        if (drawerHolder != null && drawerHolder.getVisibility() == View.VISIBLE) {
+            closeDrawer();
+            return;
+        }
+        finish();
+    }
+
+    @Override
+    protected void onDestroy() {
+        super.onDestroy();
+        ui.removeCallbacksAndMessages(null);
+        releasePlayer();
+        background.shutdownNow();
+    }
+
+    /** Suelta la memoria de los logos cuando Android avisa de que va escasa. */
+    @Override
+    public void onTrimMemory(int level) {
+        super.onTrimMemory(level);
+        if (level >= android.content.ComponentCallbacks2.TRIM_MEMORY_RUNNING_LOW) {
+            LogoLoader.trimMemory();
+        }
+    }
+
+    private void toast(String message) {
+        Toast.makeText(this, message, Toast.LENGTH_SHORT).show();
+    }
+}
+<<<<<< FIN: src/main/java/com/pocketbuilder/app_wslenytv1792177359057/PlayerActivity.java >>>>>>
+
+FIN DE LAS PARTES 34 A 46 (PlayerActivity.java queda completo).

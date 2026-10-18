@@ -1,0 +1,633 @@
+LENY TV 1.55 — CODIGO FUENTE REAL — PARTE 11 (NOMBRES, LISTAS LOCALES Y ADAPTADORES)
+===============================================================================
+Texto LITERAL de 4 archivos Java del proyecto original.
+
+  1. src/main/java/com/pocketbuilder/app_wslenytv1792177359057/Names.java              (9.706 bytes)
+  2. src/main/java/com/pocketbuilder/app_wslenytv1792177359057/LocalLists.java         (6.584 bytes)
+  3. src/main/java/com/pocketbuilder/app_wslenytv1792177359057/RogChannelAdapter.java  (3.762 bytes)
+  4. src/main/java/com/pocketbuilder/app_wslenytv1792177359057/RogCategoryAdapter.java (3.697 bytes)
+
+
+<<<<<< ARCHIVO: src/main/java/com/pocketbuilder/app_wslenytv1792177359057/Names.java >>>>>>
+package com.pocketbuilder.app_wslenytv1792177359057;
+
+import android.graphics.Paint;
+
+import java.nio.ByteBuffer;
+import java.nio.charset.Charset;
+import java.nio.charset.CharsetDecoder;
+import java.nio.charset.CodingErrorAction;
+
+/**
+ * Arreglo de los nombres de canal y de las categorías ANTES de dibujarlos.
+ *
+ * Muchas listas IPTV traen banderas y bolas de color en el nombre
+ * ("FOX SPORTS 🇦🇷", "TIGO SPORTS 🔵🟡", "ESPN 🔴"). En la captura del usuario esos
+ * nombres salían como letras sin sentido por dos motivos distintos:
+ *
+ *  1. El servidor de la lista dice una codificación (por ejemplo GBK o
+ *     ISO-8859-1) pero en realidad manda el texto en UTF-8. Al leerlo con la
+ *     codificación equivocada, cada emoji se convierte en tres o cuatro letras
+ *     raras. Aquí se deshace ese destrozo volviendo a interpretar los bytes.
+ *  2. Aunque el texto llegue bien, el teléfono puede no tener dibujo para ese
+ *     emoji concreto. En ese caso se sustituye por algo que sí se puede leer:
+ *     una bandera pasa a ser su código de país ("AR") y los símbolos que no se
+ *     pueden dibujar se quitan, sin dejar huecos.
+ *
+ * No cambia el nombre guardado ni el enlace: solo lo que se muestra en pantalla.
+ */
+final class Names {
+
+    /** Codificaciones con las que se suele leer por error un texto UTF-8. */
+    private static final String[] WRONG_CHARSETS = {
+            "windows-1252", "ISO-8859-1", "GBK", "Big5", "Shift_JIS", "EUC-KR", "windows-1251"
+    };
+
+    private Names() {
+    }
+
+    /** Texto de un nombre o categoría listo para mostrarse (sin comprobar el dibujo). */
+    static String display(String raw) {
+        return forDisplay(null, raw);
+    }
+
+    /**
+     * Texto listo para mostrarse en una vista: arregla el destrozo de
+     * codificación y, si la letra de esa vista no puede dibujar un emoji, lo
+     * cambia por algo legible.
+     */
+    static String forDisplay(Paint paint, String raw) {
+        String text = repair(raw);
+        if (text.length() == 0) return text;
+        StringBuilder out = new StringBuilder(text.length());
+        int i = 0;
+        while (i < text.length()) {
+            int code = text.codePointAt(i);
+            int size = Character.charCount(code);
+            // Marcas invisibles (unión de emojis y selectores de variación).
+            if (code == 0x200D || (code >= 0xFE00 && code <= 0xFE0F) || code == 0x20E3) {
+                i += size;
+                continue;
+            }
+            if (code >= 0x1F1E6 && code <= 0x1F1FF) {
+                // Bandera (dos letras regionales). REVISIÓN 53: se escribe SIEMPRE
+                // el código del país, sin preguntar antes si la letra puede
+                // dibujar la bandera. En el teléfono del usuario la letra decía
+                // que sí podía dibujarla y luego pintaba dos cuadros, así que
+                // «FOX SPORTS 🇦🇷» se veía mal. «AR», «MX», «ES»... se leen
+                // siempre: «FOX SPORTS AR».
+                int second = -1;
+                int secondSize = 0;
+                int next = i + size;
+                if (next < text.length()) {
+                    int other = text.codePointAt(next);
+                    if (other >= 0x1F1E6 && other <= 0x1F1FF) {
+                        second = other;
+                        secondSize = Character.charCount(other);
+                    }
+                }
+                out.append((char) ('A' + (code - 0x1F1E6)));
+                if (second > 0) out.append((char) ('A' + (second - 0x1F1E6)));
+                i = next + secondSize;
+                continue;
+            }
+            if (code < 0x2190) {
+                // Letras, acentos y puntuación normal: se respetan tal cual.
+                out.appendCodePoint(code);
+                i += size;
+                continue;
+            }
+            String symbol = new String(Character.toChars(code));
+            if (canDraw(paint, symbol)) out.append(symbol);
+            i += size;
+        }
+        return tidy(out.toString());
+    }
+
+    /**
+     * Nombre de un APARTADO listo para mostrarse: arreglado como cualquier nombre
+     * y en MAYÚSCULAS, como en la lista del reproductor ("ENTEL GOL", "LIGA XBER",
+     * "ESPN").
+     *
+     * Solo cambia lo que se dibuja: el nombre guardado del apartado sigue igual,
+     * así que los canales se siguen agrupando con el mismo texto de antes.
+     */
+    static String forSection(Paint paint, String raw) {
+        String text = forDisplay(paint, raw);
+        if (text.length() == 0) return text;
+        try {
+            return text.toUpperCase(java.util.Locale.US);
+        } catch (Throwable t) {
+            return text;
+        }
+    }
+
+    /** Deshace el destrozo de codificación y limpia caracteres de control. */
+    static String repair(String raw) {
+        if (raw == null) return "";
+        String text = raw.replace('\u00A0', ' ');
+        if (!looksMangled(text)) return tidy(text);
+        String best = text;
+        int bestScore = garbageScore(text);
+        for (int i = 0; i < WRONG_CHARSETS.length; i++) {
+            String candidate = reencode(text, WRONG_CHARSETS[i]);
+            if (candidate == null) continue;
+            int score = garbageScore(candidate);
+            if (score < bestScore) {
+                best = candidate;
+                bestScore = score;
+            }
+        }
+        return tidy(best);
+    }
+
+    // ------------------------------------------------------------------ interno
+
+    /** Vuelve a pasar el texto por bytes (con la codificación equivocada) y lo lee en UTF-8. */
+    private static String reencode(String text, String charset) {
+        try {
+            byte[] bytes = text.getBytes(Charset.forName(charset));
+            if (bytes == null || bytes.length == 0) return null;
+            String decoded = strictUtf8(bytes);
+            if (decoded == null || decoded.equals(text)) return null;
+            // Si al convertir faltaban letras (se cambiaron por "?"), el intento no
+            // sirve: se habría perdido el nombre original.
+            if (count(decoded, '?') > count(text, '?')) return null;
+            if (count(decoded, '\uFFFD') > 0) return null;
+            return decoded;
+        } catch (Throwable t) {
+            return null;
+        }
+    }
+
+    private static String strictUtf8(byte[] data) {
+        try {
+            CharsetDecoder decoder = Charset.forName("UTF-8").newDecoder()
+                    .onMalformedInput(CodingErrorAction.REPORT)
+                    .onUnmappableCharacter(CodingErrorAction.REPORT);
+            return decoder.decode(ByteBuffer.wrap(data)).toString();
+        } catch (Throwable t) {
+            return null;
+        }
+    }
+
+    /**
+     * true solo si el texto parece UTF-8 leído con otra codificación. Se exige que
+     * haya letras latinas mezcladas: un nombre escrito de verdad en chino, ruso o
+     * japonés no se toca.
+     */
+    private static boolean looksMangled(String text) {
+        if (text.length() == 0) return false;
+        int latin = 0;
+        for (int i = 0; i < text.length(); i++) {
+            char c = text.charAt(i);
+            if ((c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z')) latin++;
+        }
+        if (latin < 2) return false;
+        return garbageScore(text) >= 2;
+    }
+
+    /** Cuántas señales de texto destrozado hay (cuanto más alto, peor). */
+    private static int garbageScore(String text) {
+        int score = 0;
+        for (int i = 0; i < text.length(); i++) {
+            char c = text.charAt(i);
+            if (c == 'Ã' || c == 'Â' || c == 'ð' || c == 'Ð' || c == 'Ñ' || c == 'â'
+                    || c == '\uFFFD' || c == '\u009F' || c == '\u0080') {
+                score += 3;
+                continue;
+            }
+            if ((c >= 0x4E00 && c <= 0x9FFF)      // ideogramas chinos
+                    || (c >= 0x3040 && c <= 0x30FF)   // japonés
+                    || (c >= 0xAC00 && c <= 0xD7AF)   // coreano
+                    || (c >= 0x0400 && c <= 0x04FF)) { // cirílico
+                score += 2;
+            }
+        }
+        if (text.indexOf('\uFFFD') >= 0) score += 2;
+        return score;
+    }
+
+    private static boolean canDraw(Paint paint, String symbol) {
+        if (paint == null) return true;
+        try {
+            return paint.hasGlyph(symbol);
+        } catch (Throwable t) {
+            return true;
+        }
+    }
+
+    private static int count(String text, char value) {
+        int total = 0;
+        for (int i = 0; i < text.length(); i++) {
+            if (text.charAt(i) == value) total++;
+        }
+        return total;
+    }
+
+    /** Quita caracteres invisibles, junta espacios y recorta separadores sueltos. */
+    private static String tidy(String text) {
+        if (text == null) return "";
+        StringBuilder sb = new StringBuilder(text.length());
+        boolean space = false;
+        for (int i = 0; i < text.length(); i++) {
+            char c = text.charAt(i);
+            if (c < ' ') continue;
+            if (c == '\u200B' || c == '\u200C' || c == '\u200E' || c == '\u200F' || c == '\uFEFF') continue;
+            if (c == ' ') {
+                if (!space) sb.append(' ');
+                space = true;
+            } else {
+                sb.append(c);
+                space = false;
+            }
+        }
+        String out = sb.toString().trim();
+        while (out.length() > 0 && "·-|,;:/".indexOf(out.charAt(0)) >= 0) out = out.substring(1).trim();
+        while (out.length() > 0 && "·-|,;:/".indexOf(out.charAt(out.length() - 1)) >= 0) {
+            out = out.substring(0, out.length() - 1).trim();
+        }
+        return out;
+    }
+}
+<<<<<< FIN: src/main/java/com/pocketbuilder/app_wslenytv1792177359057/Names.java >>>>>>
+
+
+<<<<<< ARCHIVO: src/main/java/com/pocketbuilder/app_wslenytv1792177359057/LocalLists.java >>>>>>
+package com.pocketbuilder.app_wslenytv1792177359057;
+
+import android.Manifest;
+import android.app.Activity;
+import android.content.Context;
+import android.content.Intent;
+import android.content.pm.PackageManager;
+import android.net.Uri;
+import android.os.Build;
+import android.os.Environment;
+import android.provider.Settings;
+
+import java.io.File;
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.Comparator;
+import java.util.Locale;
+
+/**
+ * Busca entre las carpetas del teléfono las listas M3U/M3U8 que el usuario ya
+ * tiene descargadas (Descargas, Downloader, Documents, Movies...), como hace el
+ * panel PLAYLIST de la app de referencia.
+ */
+final class LocalLists {
+
+    /** Código de petición del permiso de lectura de archivos. */
+    static final int REQ_STORAGE = 4712;
+
+    private static final int MAX_ENTRIES = 40;
+    private static final int MAX_FILES_PER_FOLDER = 12;
+
+    /** Una lista encontrada o una carpeta que contiene listas. */
+    static final class Entry {
+        final String label;
+        final String detail;
+        final String path;
+        final boolean folder;
+
+        Entry(String label, String detail, String path, boolean folder) {
+            this.label = label == null ? "" : label;
+            this.detail = detail == null ? "" : detail;
+            this.path = path == null ? "" : path;
+            this.folder = folder;
+        }
+    }
+
+    private LocalLists() {
+    }
+
+    /** true si la app puede leer las carpetas del teléfono ahora mismo. */
+    static boolean hasAccess(Context c) {
+        if (c == null) return false;
+        try {
+            if (Build.VERSION.SDK_INT >= 30) {
+                return Environment.isExternalStorageManager();
+            }
+            return c.checkSelfPermission(Manifest.permission.READ_EXTERNAL_STORAGE)
+                    == PackageManager.PERMISSION_GRANTED;
+        } catch (Throwable t) {
+            return false;
+        }
+    }
+
+    /** Pide permiso para leer archivos (o abre los ajustes en Android 11 o superior). */
+    static void requestAccess(Activity a) {
+        if (a == null) return;
+        if (Build.VERSION.SDK_INT >= 30) {
+            try {
+                Intent intent = new Intent(Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION);
+                intent.setData(Uri.parse("package:" + a.getPackageName()));
+                a.startActivityForResult(intent, REQ_STORAGE);
+                return;
+            } catch (Throwable ignored) {
+            }
+            try {
+                a.startActivityForResult(new Intent(Settings.ACTION_MANAGE_ALL_FILES_ACCESS_PERMISSION), REQ_STORAGE);
+                return;
+            } catch (Throwable ignored) {
+            }
+        }
+        try {
+            a.requestPermissions(new String[]{Manifest.permission.READ_EXTERNAL_STORAGE}, REQ_STORAGE);
+        } catch (Throwable ignored) {
+        }
+    }
+
+    /** Recorre las carpetas habituales y devuelve listas y carpetas con listas. */
+    static ArrayList<Entry> scan(Context c) {
+        ArrayList<Entry> out = new ArrayList<Entry>();
+        ArrayList<String> seen = new ArrayList<String>();
+        ArrayList<File> roots = new ArrayList<File>();
+        addRoot(roots, Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS));
+        addRoot(roots, Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOCUMENTS));
+        addRoot(roots, Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_MOVIES));
+        addRoot(roots, Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_MUSIC));
+
+        for (int r = 0; r < roots.size(); r++) {
+            File root = roots.get(r);
+            if (root == null || !root.isDirectory()) continue;
+            File[] children = root.listFiles();
+            if (children == null) continue;
+
+            for (int i = 0; i < children.length && out.size() < MAX_ENTRIES; i++) {
+                File f = children[i];
+                if (f.isFile() && isPlaylist(f.getName())) addFile(out, seen, f);
+            }
+            for (int i = 0; i < children.length && out.size() < MAX_ENTRIES; i++) {
+                File dir = children[i];
+                if (!dir.isDirectory()) continue;
+                ArrayList<File> inside = playlistsIn(dir);
+                if (inside.size() == 1) {
+                    addFile(out, seen, inside.get(0));
+                } else if (inside.size() > 1) {
+                    addFolder(out, seen, dir, inside.size());
+                }
+            }
+            if (out.size() >= MAX_ENTRIES) break;
+        }
+        return out;
+    }
+
+    /** Listas M3U/M3U8 guardadas directamente en una carpeta. */
+    static ArrayList<File> playlistsIn(File dir) {
+        ArrayList<File> out = new ArrayList<File>();
+        if (dir == null || !dir.isDirectory()) return out;
+        File[] files = dir.listFiles();
+        if (files == null) return out;
+        for (int i = 0; i < files.length; i++) {
+            File f = files[i];
+            if (f.isFile() && isPlaylist(f.getName()) && out.size() < MAX_FILES_PER_FOLDER) out.add(f);
+        }
+        Collections.sort(out, new Comparator<File>() {
+            @Override
+            public int compare(File a, File b) {
+                return a.getName().compareToIgnoreCase(b.getName());
+            }
+        });
+        return out;
+    }
+
+    static boolean isPlaylist(String name) {
+        if (name == null) return false;
+        String low = name.toLowerCase(Locale.US);
+        return low.endsWith(".m3u") || low.endsWith(".m3u8");
+    }
+
+    private static void addRoot(ArrayList<File> roots, File dir) {
+        if (dir == null) return;
+        String path = dir.getAbsolutePath();
+        for (int i = 0; i < roots.size(); i++) {
+            if (roots.get(i).getAbsolutePath().equals(path)) return;
+        }
+        roots.add(dir);
+    }
+
+    private static void addFile(ArrayList<Entry> out, ArrayList<String> seen, File file) {
+        if (file == null) return;
+        String path = file.getAbsolutePath();
+        if (seen.contains(path)) return;
+        seen.add(path);
+        File parent = file.getParentFile();
+        out.add(new Entry(file.getName(), parent == null ? path : parent.getAbsolutePath(), path, false));
+    }
+
+    private static void addFolder(ArrayList<Entry> out, ArrayList<String> seen, File dir, int count) {
+        String path = dir.getAbsolutePath();
+        if (seen.contains(path)) return;
+        seen.add(path);
+        out.add(new Entry(dir.getName() + " (" + count + ")", path, path, true));
+    }
+}
+<<<<<< FIN: src/main/java/com/pocketbuilder/app_wslenytv1792177359057/LocalLists.java >>>>>>
+
+
+<<<<<< ARCHIVO: src/main/java/com/pocketbuilder/app_wslenytv1792177359057/RogChannelAdapter.java >>>>>>
+package com.pocketbuilder.app_wslenytv1792177359057;
+
+import android.content.Context;
+import android.graphics.Typeface;
+import android.view.Gravity;
+import android.view.View;
+import android.view.ViewGroup;
+import android.widget.BaseAdapter;
+import android.widget.ImageView;
+import android.widget.LinearLayout;
+import android.widget.TextView;
+
+import java.util.ArrayList;
+
+/**
+ * Cuadrícula de canales de la pantalla general, copiada de la referencia:
+ * cada canal es un recuadro blanco con su logo y, debajo, el nombre centrado en
+ * un máximo de dos líneas. No lleva marcos ni botones añadidos.
+ *
+ * El adaptador recibe la MISMA lista que la app ya usaba para dibujar la
+ * cuadrícula, así que los filtros, la búsqueda y la apertura del reproductor
+ * siguen funcionando igual que antes.
+ */
+final class RogChannelAdapter extends BaseAdapter {
+
+    private final Context ctx;
+    private final ArrayList<Channel> data;
+
+    RogChannelAdapter(Context ctx, ArrayList<Channel> data) {
+        this.ctx = ctx;
+        this.data = data;
+    }
+
+    @Override
+    public int getCount() {
+        return data == null ? 0 : data.size();
+    }
+
+    @Override
+    public Object getItem(int position) {
+        return data == null || position < 0 || position >= data.size() ? null : data.get(position);
+    }
+
+    @Override
+    public long getItemId(int position) {
+        return position;
+    }
+
+    @Override
+    public View getView(int position, View convertView, ViewGroup parent) {
+        LinearLayout card;
+        ImageView logo;
+        TextView name;
+        if (convertView instanceof LinearLayout && convertView.getTag() instanceof Object[]) {
+            card = (LinearLayout) convertView;
+            Object[] holder = (Object[]) card.getTag();
+            logo = (ImageView) holder[0];
+            name = (TextView) holder[1];
+        } else {
+            card = new LinearLayout(ctx);
+            card.setOrientation(LinearLayout.VERTICAL);
+            card.setGravity(Gravity.CENTER_HORIZONTAL);
+            card.setPadding(Ui.dpi(ctx, 4), Ui.dpi(ctx, 4), Ui.dpi(ctx, 4), Ui.dpi(ctx, 4));
+            card.setBackgroundColor(0x00000000);
+
+            logo = new ImageView(ctx);
+            logo.setScaleType(ImageView.ScaleType.FIT_CENTER);
+            logo.setBackground(RogStyle.logoBox(ctx));
+            logo.setPadding(Ui.dpi(ctx, 5), Ui.dpi(ctx, 5), Ui.dpi(ctx, 5), Ui.dpi(ctx, 5));
+            card.addView(logo, new LinearLayout.LayoutParams(
+                    LinearLayout.LayoutParams.MATCH_PARENT, Ui.dpi(ctx, 52)));
+
+            name = new TextView(ctx);
+            name.setTextSize(9.5f);
+            name.setTextColor(RogStyle.TEXT);
+            name.setTypeface(Typeface.DEFAULT_BOLD);
+            name.setGravity(Gravity.CENTER_HORIZONTAL);
+            name.setMaxLines(2);
+            name.setEllipsize(android.text.TextUtils.TruncateAt.END);
+            name.setLineSpacing(0f, 0.95f);
+            LinearLayout.LayoutParams nameParams = new LinearLayout.LayoutParams(
+                    LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT);
+            nameParams.topMargin = Ui.dpi(ctx, 3);
+            card.addView(name, nameParams);
+
+            card.setTag(new Object[]{logo, name});
+        }
+
+        Channel channel = data.get(position);
+        // Los nombres con banderas y bolas de color se arreglan antes de dibujarlos:
+        // si el teléfono no puede dibujar el emoji, se muestra algo legible (AR, MX...).
+        String visible = Names.forDisplay(name.getPaint(), channel.name);
+        name.setText(visible);
+        logo.setImageDrawable(null);
+        LogoLoader.load(ctx, channel.logo, logo, visible);
+        card.setContentDescription(visible);
+        return card;
+    }
+}
+<<<<<< FIN: src/main/java/com/pocketbuilder/app_wslenytv1792177359057/RogChannelAdapter.java >>>>>>
+
+
+<<<<<< ARCHIVO: src/main/java/com/pocketbuilder/app_wslenytv1792177359057/RogCategoryAdapter.java >>>>>>
+package com.pocketbuilder.app_wslenytv1792177359057;
+
+import android.graphics.Typeface;
+import android.view.View;
+import android.view.ViewGroup;
+import android.widget.BaseAdapter;
+import android.widget.TextView;
+
+import java.util.ArrayList;
+
+/**
+ * Columna de categorías de la pantalla general (izquierda), copiada de la
+ * referencia: cada fila muestra el nombre del apartado y la categoría elegida
+ * aparece dentro de una caja azul.
+ *
+ * REVISIÓN 53: la fila ya NO lleva delante la cifra de canales (el usuario veía
+ * «37 FOX SPORTS», «393 ESPN» y pidió los nombres limpios).
+ */
+final class RogCategoryAdapter extends BaseAdapter {
+
+    /** Con qué categoría se compara cada fila para saber si está elegida. */
+    interface Selected {
+        String id();
+    }
+
+    private final android.content.Context ctx;
+    private final ArrayList<String> names;
+    private final java.util.HashMap<String, Integer> counts;
+    private final Selected selected;
+
+    RogCategoryAdapter(android.content.Context ctx, ArrayList<String> names,
+                       java.util.HashMap<String, Integer> counts, Selected selected) {
+        this.ctx = ctx;
+        this.names = names;
+        this.counts = counts;
+        this.selected = selected;
+    }
+
+    @Override
+    public int getCount() {
+        return names == null ? 0 : names.size();
+    }
+
+    @Override
+    public Object getItem(int position) {
+        return names == null || position < 0 || position >= names.size() ? null : names.get(position);
+    }
+
+    @Override
+    public long getItemId(int position) {
+        return position;
+    }
+
+    @Override
+    public View getView(int position, View convertView, ViewGroup parent) {
+        TextView row = convertView instanceof TextView ? (TextView) convertView : new TextView(ctx);
+        String category = names.get(position);
+        String current = selected == null ? "" : selected.id();
+        boolean chosen = category.equals(current);
+
+        int total = 0;
+        Integer count = counts == null ? null : counts.get(category);
+        if (count != null) {
+            total = count.intValue();
+        } else if (counts != null) {
+            // La fila «Todas» no tiene cifra propia: se suman todas.
+            for (Integer value : counts.values()) {
+                if (value != null) total += value.intValue();
+            }
+        }
+
+        // Los apartados se muestran en MAYÚSCULAS (como en la lista del usuario);
+        // el nombre guardado no cambia, así que la categoría elegida se sigue
+        // reconociendo igual.
+        //
+        // REVISIÓN 53: el usuario pidió quitar los números delante de los nombres
+        // («37 FOX SPORTS» → «FOX SPORTS», «393 ESPN» → «ESPN»). Esa cifra era el
+        // número de canales del apartado, no parte del nombre. Los apartados que
+        // llevan números de verdad (24/7) los conservan, porque van dentro del
+        // propio nombre. La cifra sigue disponible para quien use el lector de
+        // pantalla, en la descripción.
+        String visible = Names.forSection(row.getPaint(), category);
+        row.setText(visible);
+        row.setTextSize(10.5f);
+        row.setTypeface(Typeface.DEFAULT_BOLD);
+        row.setTextColor(chosen ? 0xFFFFFFFF : RogStyle.TEXT_DIM);
+        row.setBackground(RogStyle.categoryRow(ctx, chosen));
+        row.setPadding(Ui.dpi(ctx, 7), Ui.dpi(ctx, 7), Ui.dpi(ctx, 6), Ui.dpi(ctx, 7));
+        row.setGravity(android.view.Gravity.CENTER_VERTICAL);
+        row.setMaxLines(2);
+        row.setEllipsize(android.text.TextUtils.TruncateAt.END);
+        row.setContentDescription(category + ": " + total + " canales");
+        return row;
+    }
+}
+<<<<<< FIN: src/main/java/com/pocketbuilder/app_wslenytv1792177359057/RogCategoryAdapter.java >>>>>>
+
+
+FIN DE LA PARTE 11 (4 archivos). Continua en la parte 12.

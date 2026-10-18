@@ -1,0 +1,228 @@
+LENY TV 1.55 — PARTE 39 DE LA EXPORTACION DEL CODIGO FUENTE
+===========================================================
+Contenido LITERAL. Continuacion de PlayerActivity.java (se pega JUSTO DETRAS de
+la parte 38, sin repetir lineas).
+Ruta original: src/main/java/com/pocketbuilder/app_wslenytv1792177359057/PlayerActivity.java
+
+
+<<<<<< CONTINUACION: src/main/java/com/pocketbuilder/app_wslenytv1792177359057/PlayerActivity.java >>>>>>
+    // ---------------------------------------------------------------- volumen y brillo
+
+    private void setVolumePercent(float percent) {
+        AudioManager am = (AudioManager) getSystemService(AUDIO_SERVICE);
+        if (am == null) return;
+        float clamped = clamp(percent, 0f, 1f);
+        int value = Math.round(clamped * audioMax);
+        try {
+            am.setStreamVolume(AudioManager.STREAM_MUSIC, value, 0);
+        } catch (Exception ignored) {
+        }
+        if (volumeBar != null) volumeBar.setProgress(Math.round(clamped * 100f));
+    }
+
+    private int volumePercent() {
+        AudioManager am = (AudioManager) getSystemService(AUDIO_SERVICE);
+        if (am == null) return 50;
+        int max = Math.max(1, am.getStreamMaxVolume(AudioManager.STREAM_MUSIC));
+        return Math.round(100f * am.getStreamVolume(AudioManager.STREAM_MUSIC) / max);
+    }
+
+    private float brightnessValue() {
+        WindowManager.LayoutParams params = getWindow().getAttributes();
+        return params.screenBrightness < 0f ? 0.5f : params.screenBrightness;
+    }
+
+    private void setBrightness(float value) {
+        WindowManager.LayoutParams params = getWindow().getAttributes();
+        params.screenBrightness = clamp(value, 0.05f, 1f);
+        getWindow().setAttributes(params);
+    }
+
+    private void showGestureIndicator(String label, int percent) {
+        if (gesturePanel == null) return;
+        gestureLabel.setText(label + "  " + percent + "%");
+        gestureBar.setProgress(percent);
+        gesturePanel.setVisibility(View.VISIBLE);
+        ui.removeCallbacks(hideGesture);
+        ui.postDelayed(hideGesture, 900);
+    }
+
+    private static float clamp(float value, float min, float max) {
+        return value < min ? min : (value > max ? max : value);
+    }
+
+    private final class GestureListener implements View.OnTouchListener {
+        private boolean active;
+        private boolean volumeSide;
+        private boolean moved;
+        private float startY;
+        private long downTime;
+        private float startVolumePercent;
+        private float startBrightness;
+
+        @Override
+        public boolean onTouch(View view, MotionEvent event) {
+            int action = event.getActionMasked();
+            if (action == MotionEvent.ACTION_DOWN) {
+                downTime = System.currentTimeMillis();
+                startY = event.getY();
+                moved = false;
+                float edge = Ui.dpi(PlayerActivity.this, 36);
+                active = !locked && event.getX() > edge && event.getX() < view.getWidth() - edge;
+                volumeSide = event.getX() < view.getWidth() / 2f;
+                startVolumePercent = volumePercent() / 100f;
+                startBrightness = brightnessValue();
+                return true;
+            }
+            if (action == MotionEvent.ACTION_MOVE) {
+                if (!active) return true;
+                float delta = startY - event.getY();
+                float threshold = Ui.dpi(PlayerActivity.this, 12);
+                if (!moved && Math.abs(delta) < threshold) return true;
+                moved = true;
+                float range = Math.max(1f, view.getHeight() * 0.7f);
+                if (volumeSide) {
+                    float percent = clamp(startVolumePercent + delta / range, 0f, 1f);
+                    setVolumePercent(percent);
+                    showGestureIndicator("VOLUMEN", Math.round(percent * 100f));
+                } else {
+                    float percent = clamp(startBrightness + delta / range, 0.05f, 1f);
+                    setBrightness(percent);
+                    showGestureIndicator("BRILLO", Math.round(percent * 100f));
+                    if (gestureBar != null) gestureBar.setProgressTintList(ColorStateList.valueOf(Ui.BLUE));
+                }
+                if (volumeSide && gestureBar != null) {
+                    gestureBar.setProgressTintList(ColorStateList.valueOf(Ui.RED));
+                }
+                return true;
+            }
+            if (action == MotionEvent.ACTION_UP || action == MotionEvent.ACTION_CANCEL) {
+                if (!moved && !locked && System.currentTimeMillis() - downTime < 350) {
+                    toggleControls();
+                }
+                ui.removeCallbacks(hideGesture);
+                ui.postDelayed(hideGesture, 500);
+                return true;
+            }
+            return true;
+        }
+    }
+
+    // -------------------------------------------------------------- reproducción
+
+    private String resolveType(String url) {
+        return FormatDetector.fromUrl(url);
+    }
+
+    /**
+     * Enlace que se reproduce del canal. Normalmente es el del canal; si la persona
+     * eligió una calidad concreta de una lista con varias (HLS), es el de esa
+     * calidad.
+     */
+    private String playbackUrl(Channel channel) {
+        if (variantUrl != null && variantUrl.length() > 0) return variantUrl;
+        return channel == null ? "" : channel.url;
+    }
+
+    /** Descripción del intento que está en curso, para el registro. */
+    private String attemptLabel() {
+        return useProxy ? "intento 2 (puente local con cabeceras)" : "intento 1 (conexión directa)";
+    }
+
+    /** De dónde salió el tipo de contenido, para el informe del motor. */
+    private String routeOrigin() {
+        if (manualType.length() > 0) return " (elegido a mano en AJUSTES DEL REPRODUCTOR)";
+        if (typeOrigin.length() > 0) return typeOrigin;
+        return " (por la extensión del enlace)";
+    }
+
+    /**
+     * Datos internos que el reproductor de Android guarda sobre el intento. En
+     * algunos teléfonos incluyen el motivo real del fallo, que los dos números de
+     * onError no dan (por eso aparece el famoso -2147483648 sin explicación).
+     */
+    private String engineMetrics(MediaPlayer mp) {
+        if (mp == null) return "";
+        StringBuilder sb = new StringBuilder();
+        try {
+            android.os.PersistableBundle bundle = mp.getMetrics();
+            if (bundle == null) return "";
+            java.util.Set<String> keys = bundle.keySet();
+            if (keys == null) return "";
+            for (String key : keys) {
+                if (key == null) continue;
+                String low = key.toLowerCase(Locale.US);
+                if (low.indexOf("error") < 0 && low.indexOf("codec") < 0 && low.indexOf("mime") < 0) continue;
+                Object value = bundle.get(key);
+                if (value == null) continue;
+                sb.append(key).append('=').append(String.valueOf(value)).append(" · ");
+                if (sb.length() > 500) break;
+            }
+        } catch (Throwable ignored) {
+            // El teléfono puede no ofrecer estos datos: no es un fallo de la app.
+        }
+        return sb.length() == 0 ? "" : sb.toString().trim();
+    }
+
+    /**
+     * Pregunta al servidor qué responde ahora mismo por el enlace (código HTTP
+     * real y tipo de contenido, sin descargarlo) y lo añade al aviso de la
+     * pantalla. Así un fallo deja de ser un número que no explica nada: se ve si
+     * es 403 (faltan cabeceras User-Agent/Referer), 404 (el enlace caducó), una
+     * página web en lugar del canal, etc.
+     */
+    private void askServerForReason(final Channel channel) {
+        final Map<String, String> headers = channelHeaders(channel);
+        try {
+            background.execute(new ServerQuestion(channel, headers));
+        } catch (Throwable t) {
+            // El hilo de trabajo ya se cerró (por ejemplo al salir de la pantalla):
+            // la comprobación es solo informativa, nunca debe cerrar la app.
+            Diag.add("Reproductor · no se pudo preguntar al servidor: " + Net.describe(t));
+        }
+    }
+
+    /** Comprobación del enlace en segundo plano, para no bloquear la imagen. */
+    private final class ServerQuestion implements Runnable {
+        private final Channel channel;
+        private final Map<String, String> headers;
+
+        ServerQuestion(Channel channel, Map<String, String> headers) {
+            this.channel = channel;
+            this.headers = headers;
+        }
+
+        @Override
+        public void run() {
+                String reply;
+                try {
+                    reply = Net.quickStatus(channel.url, headers);
+                } catch (Throwable t) {
+                    reply = "no se pudo preguntar al servidor: " + Net.describe(t);
+                }
+                final String answer = reply;
+                EngineInfo.server(answer);
+                Diag.add("Reproductor · el servidor responde ahora: " + answer);
+                Diag.save(PlayerActivity.this);
+                ui.post(new Runnable() {
+                    @Override
+                    public void run() {
+                        if (isFinishing() || isDestroyed()) return;
+                        appendMessage("\n\nLo que responde el servidor ahora mismo: " + answer);
+                    }
+                });
+        }
+    }
+
+    /** Añade texto al aviso que ya está en pantalla, sin borrar lo anterior. */
+    private void appendMessage(String extra) {
+        if (extra == null || extra.length() == 0) return;
+        if (messageBody == null || messageHolder == null) return;
+        if (messageHolder.getVisibility() != View.VISIBLE) return;
+        String current = messageBody.getText() == null ? "" : messageBody.getText().toString();
+        if (current.indexOf(extra.trim()) >= 0) return;
+        messageBody.setText(current + extra);
+        messageText = messageText + extra;
+        ui.removeCallbacks(fitMessage);
+        ui.post(fitMessage);
+    }

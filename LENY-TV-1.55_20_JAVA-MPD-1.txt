@@ -1,0 +1,399 @@
+LENY TV 1.55 — CODIGO FUENTE REAL — PARTE 20 (LECTOR DE MANIFIESTOS MPD, 1 de 2)
+==============================================================================
+Texto LITERAL de src/main/java/com/pocketbuilder/app_wslenytv1792177359057/Mpd.java (48.976 bytes).
+Por su tamaño se reparte en DOS partes (20 y 21). Para reconstruirlo hay que
+pegar la parte 21 justo detrás de la 20, sin añadir ni quitar nada.
+
+
+<<<<<< ARCHIVO: src/main/java/com/pocketbuilder/app_wslenytv1792177359057/Mpd.java (PARTE 20 de 2: principio del archivo) >>>>>>
+package com.pocketbuilder.app_wslenytv1792177359057;
+
+import org.xmlpull.v1.XmlPullParser;
+import org.xmlpull.v1.XmlPullParserFactory;
+
+import java.io.StringReader;
+import java.text.SimpleDateFormat;
+import java.util.ArrayList;
+import java.util.Date;
+import java.util.Locale;
+import java.util.TimeZone;
+
+/**
+ * Lector de manifiestos DASH (.mpd).
+ *
+ * Un manifiesto DASH no es un vídeo: es un índice XML que describe las calidades
+ * disponibles (Representation) y cómo pedir cada trozo de vídeo o de audio
+ * (SegmentTemplate con $Number$ o con SegmentTimeline, SegmentList, o un único
+ * archivo con SegmentBase).
+ *
+ * Esta clase solo lee el índice y deja preparadas las direcciones de cada trozo.
+ * La descarga y la reproducción las hace DashPlayer.
+ */
+final class Mpd {
+
+    /** Una calidad del manifiesto: una pista de vídeo o una pista de audio. */
+    static final class Rep {
+        String id = "";
+        String mimeType = "";
+        String contentType = "";
+        String codecs = "";
+        String lang = "";
+        int bandwidth;
+        int width;
+        int height;
+        int audioChannels;
+        String baseUrl = "";
+        String initUrl = "";
+        String media = "";
+        long timescale = 1;
+        long segDuration = 0;
+        long startNumber = 1;
+        long presentationTimeOffset = 0;
+        /** Un solo archivo para toda la pista (SegmentBase): se reproduce directo. */
+        boolean singleFile;
+        /** Entradas {t, d} del SegmentTimeline (t = -1 significa "a continuación"). */
+        final ArrayList<long[]> timeline = new ArrayList<long[]>();
+        /** Direcciones sueltas de un SegmentList. */
+        final ArrayList<String> listUrls = new ArrayList<String>();
+        /**
+         * El manifiesto declara protección sobre ESTA pista concreta (no solo
+         * sobre el canal). Así un manifiesto que protege únicamente una pista que
+         * la app no usa (por ejemplo unos subtítulos o un audio alternativo) ya no
+         * bloquea la reproducción del vídeo que sí es libre.
+         */
+        boolean protectedContent;
+        /** Sistemas de protección declarados para esta pista, tal cual vienen. */
+        final ArrayList<String> protectionSchemes = new ArrayList<String>();
+        /** Nombre del sistema de protección de esta pista ("" si no se identifica). */
+        String protectionSystem = "";
+
+        boolean isVideo() {
+            String mime = mimeType.toLowerCase(Locale.US);
+            if (mime.indexOf("video") == 0) return true;
+            if (mime.indexOf("audio") == 0) return false;
+            // Muchos manifiestos no escriben mimeType en la pista y se reconocen por
+            // contentType, por la resolución o por el nombre del códec.
+            String kind = contentType.toLowerCase(Locale.US);
+            if (kind.indexOf("video") >= 0) return true;
+            if (kind.indexOf("audio") >= 0 || kind.indexOf("text") >= 0) return false;
+            if (height > 0 || width > 0) return true;
+            String codec = codecs.toLowerCase(Locale.US);
+            if (codec.indexOf("avc") >= 0 || codec.indexOf("hvc") >= 0 || codec.indexOf("hev") >= 0
+                    || codec.indexOf("av01") >= 0 || codec.indexOf("vp09") >= 0 || codec.indexOf("vp08") >= 0
+                    || codec.indexOf("dvh") >= 0) {
+                return true;
+            }
+            return false;
+        }
+
+        boolean isAudio() {
+            String mime = mimeType.toLowerCase(Locale.US);
+            if (mime.indexOf("audio") == 0) return true;
+            if (mime.indexOf("video") == 0) return false;
+            String kind = contentType.toLowerCase(Locale.US);
+            if (kind.indexOf("audio") >= 0) return true;
+            if (kind.indexOf("video") >= 0 || kind.indexOf("text") >= 0) return false;
+            String codec = codecs.toLowerCase(Locale.US);
+            // Una pista con códec de vídeo no se trata como audio, aunque su lista de
+            // códecs incluya también el del sonido.
+            if (codec.indexOf("avc") >= 0 || codec.indexOf("hvc") >= 0 || codec.indexOf("hev") >= 0
+                    || codec.indexOf("av01") >= 0 || codec.indexOf("vp09") >= 0 || codec.indexOf("vp08") >= 0) {
+                return false;
+            }
+            return codec.indexOf("mp4a") >= 0 || codec.indexOf("ac-3") >= 0 || codec.indexOf("ec-3") >= 0
+                    || codec.indexOf("opus") >= 0 || codec.indexOf("vorbis") >= 0 || codec.indexOf("dts") >= 0;
+        }
+
+        /** true si la pista no es ni vídeo ni audio (por ejemplo subtítulos). */
+        boolean isOther() {
+            String mime = mimeType.toLowerCase(Locale.US);
+            if (mime.indexOf("text") == 0 || mime.indexOf("application/ttml") == 0) return true;
+            return contentType.toLowerCase(Locale.US).indexOf("text") >= 0;
+        }
+
+        /** Duración de un trozo en milisegundos (0 si no se puede saber). */
+        long segmentMs() {
+            if (timeline.size() > 0) {
+                long[] first = timeline.get(0);
+                return toMs(first[1]);
+            }
+            return segDuration > 0 ? toMs(segDuration) : 0;
+        }
+
+        long toMs(long units) {
+            if (timescale <= 0) return 0;
+            return Math.round(units * 1000.0 / timescale);
+        }
+
+        /** Nombre corto y legible del códec. */
+        String codecName() {
+            String codecs = this.codecs.toLowerCase(Locale.US);
+            if (codecs.length() == 0) return "";
+            if (codecs.indexOf("avc") >= 0) return "H.264";
+            if (codecs.indexOf("hvc") >= 0 || codecs.indexOf("hev") >= 0) return "H.265";
+            if (codecs.indexOf("av01") >= 0) return "AV1";
+            if (codecs.indexOf("vp09") >= 0 || codecs.indexOf("vp9") >= 0) return "VP9";
+            if (codecs.indexOf("vp08") >= 0 || codecs.indexOf("vp8") >= 0) return "VP8";
+            if (codecs.indexOf("mp4a") >= 0) return "AAC";
+            if (codecs.indexOf("ac-3") >= 0) return "AC-3";
+            if (codecs.indexOf("ec-3") >= 0) return "E-AC-3";
+            if (codecs.indexOf("opus") >= 0) return "Opus";
+            if (codecs.indexOf("vorbis") >= 0) return "Vorbis";
+            if (codecs.indexOf("dts") >= 0) return "DTS";
+            int dot = codecs.indexOf('.');
+            return dot > 0 ? codecs.substring(0, dot) : codecs;
+        }
+
+        /** Etiqueta de esta calidad para el menú CALIDAD. */
+        String label() {
+            StringBuilder sb = new StringBuilder();
+            if (height > 0) sb.append(height).append("p");
+            else if (bandwidth > 0) sb.append(Math.round(bandwidth / 1000f)).append(" kbps");
+            else if (id.length() > 0) sb.append("Pista ").append(id);
+            else sb.append("Pista");
+            if (bandwidth > 0 && height > 0) sb.append(" · ").append(Math.round(bandwidth / 1000f)).append(" kbps");
+            String codec = codecName();
+            if (codec.length() > 0) sb.append(" · ").append(codec);
+            return sb.toString();
+        }
+
+        String describe() {
+            return (width > 0 ? width + "×" + height + " · " : "")
+                    + (mimeType.length() == 0 ? "(sin tipo)" : mimeType)
+                    + (codecs.length() == 0 ? "" : " · " + codecs)
+                    + (bandwidth > 0 ? " · " + Math.round(bandwidth / 1000f) + " kbps" : "");
+        }
+    }
+
+    /** Cuántos trozos forman un bloque repetido del SegmentTimeline. */
+    static final class Timeline {
+        long time;
+        long duration;
+        long repeat;
+    }
+
+    String type = "static";
+    boolean dynamic;
+    long mediaDurationMs;
+    long availabilityStartMs;
+    long timeShiftMs = -1;
+    long minimumUpdateMs;
+    int periodCount;
+    /**
+     * Periodo del manifiesto que se reproduce (1 = el primero). En un canal en
+     * directo es el último: los trozos de los periodos anteriores ya no están
+     * publicados en el servidor y pedirlos era un motivo real de que el canal no
+     * arrancara.
+     */
+    int usedPeriod;
+    String baseUrl = "";
+    /** Sistemas de protección declarados, tal cual aparecen (por ejemplo Widevine o ClearKey). */
+    final ArrayList<String> protections = new ArrayList<String>();
+    /**
+     * Dirección del servidor de licencias que declara el manifiesto (elemento
+     * Laurl / LicenseURL dentro de ContentProtection). Se lee para poder explicar
+     * de dónde vendría la licencia; LENY TV NUNCA la pide ni la usa para descifrar.
+     */
+    String licenseUrl = "";
+    /** El manifiesto incluye datos de inicio de protección (pssh). */
+    boolean hasPssh;
+    final ArrayList<Rep> reps = new ArrayList<Rep>();
+
+    private Mpd() {
+    }
+
+    ArrayList<Rep> videoReps() {
+        ArrayList<Rep> out = new ArrayList<Rep>();
+        for (int i = 0; i < reps.size(); i++) {
+            Rep r = reps.get(i);
+            if (r.isVideo()) out.add(r);
+        }
+        return out;
+    }
+
+    ArrayList<Rep> audioReps() {
+        ArrayList<Rep> out = new ArrayList<Rep>();
+        for (int i = 0; i < reps.size(); i++) {
+            Rep r = reps.get(i);
+            if (r.isAudio()) out.add(r);
+        }
+        return out;
+    }
+
+    boolean hasProtection() {
+        return schemesSayProtected(protections);
+    }
+
+    /**
+     * true si esas protecciones significan contenido cifrado.
+     *
+     * Antes solo se daba por protegido un manifiesto con urn:uuid o con el nombre
+     * del sistema escrito. Se quedaba fuera el caso más habitual de los manifiestos
+     * reales: «urn:mpeg:dash:mp4protection» con value="cenc" (o "cbcs"), que es
+     * justamente la declaración de que las pistas van cifradas con CENC.
+     */
+    static boolean schemesSayProtected(ArrayList<String> list) {
+        if (list == null) return false;
+        for (int i = 0; i < list.size(); i++) {
+            String value = list.get(i) == null ? "" : list.get(i).toLowerCase(Locale.US);
+            if (value.indexOf("urn:uuid") >= 0 || value.indexOf("widevine") >= 0
+                    || value.indexOf("clearkey") >= 0 || value.indexOf("playready") >= 0
+                    || value.indexOf("marlin") >= 0 || value.indexOf("fairplay") >= 0) {
+                return true;
+            }
+            if (value.indexOf("mp4protection") >= 0
+                    && (value.indexOf("cenc") >= 0 || value.indexOf("cbcs") >= 0
+                    || value.indexOf("cens") >= 0 || value.indexOf("cbc1") >= 0)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /** Nombre legible del sistema de protección a partir de su identificador. */
+    static String systemName(String scheme) {
+        String low = scheme == null ? "" : scheme.toLowerCase(Locale.US);
+        if (low.indexOf("edef8ba9") >= 0 || low.indexOf("widevine") >= 0) return "Widevine";
+        if (low.indexOf("e2719d58") >= 0 || low.indexOf("clearkey") >= 0) return "ClearKey";
+        if (low.indexOf("9a04f079") >= 0 || low.indexOf("playready") >= 0) return "PlayReady";
+        if (low.indexOf("5e629af5") >= 0 || low.indexOf("marlin") >= 0) return "Marlin";
+        if (low.indexOf("94ce86fb") >= 0 || low.indexOf("fairplay") >= 0) return "FairPlay";
+        if (low.indexOf("mp4protection") >= 0) return "CENC (sin sistema nombrado)";
+        return "";
+    }
+
+    /** true si alguna pista de VÍDEO del manifiesto declara protección. */
+    boolean videosProtected() {
+        for (int i = 0; i < reps.size(); i++) {
+            Rep rep = reps.get(i);
+            if (rep.isVideo() && rep.protectedContent) return true;
+        }
+        return false;
+    }
+
+    /** true si alguna pista de AUDIO del manifiesto declara protección. */
+    boolean audiosProtected() {
+        for (int i = 0; i < reps.size(); i++) {
+            Rep rep = reps.get(i);
+            if (rep.isAudio() && rep.protectedContent) return true;
+        }
+        return false;
+    }
+
+    /** Sistema de protección de las pistas de vídeo ("" si no se identifica). */
+    String videoProtectionSystem() {
+        for (int i = 0; i < reps.size(); i++) {
+            Rep rep = reps.get(i);
+            if (rep.isVideo() && rep.protectedContent && rep.protectionSystem.length() > 0) {
+                return rep.protectionSystem;
+            }
+        }
+        return protectionSystem();
+    }
+
+    /** Identificador UUID del sistema de protección del vídeo ("" si no se escribe). */
+    String videoProtectionUuid() {
+        for (int i = 0; i < reps.size(); i++) {
+            Rep rep = reps.get(i);
+            if (!rep.isVideo() || !rep.protectedContent) continue;
+            for (int j = 0; j < rep.protectionSchemes.size(); j++) {
+                String scheme = rep.protectionSchemes.get(j);
+                int at = scheme.toLowerCase(Locale.US).indexOf("urn:uuid:");
+                if (at >= 0) {
+                    String uuid = scheme.substring(at + 9).trim();
+                    int cut = uuid.indexOf(' ');
+                    return cut > 0 ? uuid.substring(0, cut) : uuid;
+                }
+            }
+        }
+        return "";
+    }
+
+    /** Nombre del sistema de protección más habitual (o cadena vacía). */
+    String protectionSystem() {
+        for (int i = 0; i < protections.size(); i++) {
+            String value = protections.get(i).toLowerCase(Locale.US);
+            if (value.indexOf("edef8ba9") >= 0 || value.indexOf("widevine") >= 0) return "Widevine";
+            if (value.indexOf("e2719d58") >= 0 || value.indexOf("clearkey") >= 0) return "ClearKey";
+            if (value.indexOf("9a04f079") >= 0 || value.indexOf("playready") >= 0) return "PlayReady";
+            if (value.indexOf("5e629af5") >= 0 || value.indexOf("marlin") >= 0) return "Marlin";
+            if (value.indexOf("94ce86fb") >= 0 || value.indexOf("fairplay") >= 0) return "FairPlay";
+        }
+        return "";
+    }
+
+    /** Identificador del sistema de protección, si es uno conocido. */
+    String protectionUuid() {
+        for (int i = 0; i < protections.size(); i++) {
+            String value = protections.get(i);
+            String low = value.toLowerCase(Locale.US);
+            int at = low.indexOf("urn:uuid:");
+            if (at >= 0) {
+                String uuid = value.substring(at + 9).trim();
+                int cut = uuid.indexOf(' ');
+                if (cut > 0) uuid = uuid.substring(0, cut);
+                return uuid;
+            }
+        }
+        return "";
+    }
+
+    /**
+     * Servidor del que se pediría la licencia, escrito SOLO con el nombre del
+     * servidor: la dirección de licencia suele llevar un token o una clave en el
+     * camino, y eso no debe aparecer nunca en la app ni en el diagnóstico.
+     */
+    String licenseHost() {
+        if (licenseUrl == null || licenseUrl.length() == 0) return "";
+        try {
+            java.net.URL parsed = new java.net.URL(licenseUrl);
+            String host = parsed.getHost();
+            if (host == null || host.length() == 0) return "(servidor local)";
+            return parsed.getProtocol() + "://" + host + "/…";
+        } catch (Throwable t) {
+            return "(dirección de licencia no legible)";
+        }
+    }
+
+    /** Resumen legible del manifiesto para el registro de diagnóstico. */
+    String summary() {
+        StringBuilder sb = new StringBuilder();
+        sb.append(dynamic ? "EN DIRECTO (dynamic)" : "bajo demanda (static)");
+        int totalPeriods = periodCount <= 0 ? 1 : periodCount;
+        sb.append(" · ").append(totalPeriods).append(" periodo(s)");
+        if (totalPeriods > 1) {
+            sb.append(" · se reproduce el periodo ").append(usedPeriod <= 0 ? totalPeriods : usedPeriod)
+                    .append(dynamic ? " (el más reciente: es el que tiene trozos publicados)"
+                            : " (el primero: es el principio del contenido)");
+        }
+        sb.append(" · ").append(reps.size()).append(" pistas");
+        ArrayList<Rep> videos = videoReps();
+        ArrayList<Rep> audios = audioReps();
+        sb.append(" (").append(videos.size()).append(" de vídeo, ").append(audios.size()).append(" de audio)");
+        if (videos.size() > 0) {
+            Rep best = videos.get(videos.size() - 1);
+            sb.append(" · vídeo ").append(best.width).append("×").append(best.height)
+                    .append(" ").append(best.codecName());
+            if (best.segmentMs() > 0) sb.append(" · trozos de ").append(best.segmentMs() / 1000f).append(" s");
+        }
+        if (audios.size() > 0) {
+            Rep audio = audios.get(0);
+            sb.append(" · audio ").append(audio.codecName());
+            if (audio.lang.length() > 0) sb.append(" (").append(audio.lang).append(")");
+        }
+        if (hasProtection()) {
+            if (videosProtected()) {
+                String system = videoProtectionSystem();
+                sb.append(" · PROTEGIDO: ")
+                        .append(system.length() == 0 ? "sistema desconocido" : system);
+                if (licenseHost().length() > 0) sb.append(" · licencia en ").append(licenseHost());
+            } else {
+                sb.append(" · declara DRM solo en pistas que no se usan (el vídeo no marca protección)");
+            }
+        }
+        return sb.toString();
+    }
+<<<<<< FIN PARCIAL DE LA PARTE 20: el archivo continua en la PARTE 21 >>>>>>
+
+
+FIN DE LA PARTE 20. El resto de Mpd.java esta en la parte 21.

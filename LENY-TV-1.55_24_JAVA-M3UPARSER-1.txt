@@ -1,0 +1,517 @@
+LENY TV 1.55 — CODIGO FUENTE REAL — PARTE 24 (LECTOR DE LISTAS M3U, 1 de 3)
+=========================================================================
+Texto LITERAL de src/main/java/com/pocketbuilder/app_wslenytv1792177359057/M3uParser.java (61.084 bytes).
+Por su tamaño se reparte en TRES partes (24, 25 y 26). Para reconstruirlo hay que
+pegar la 25 detrás de la 24 y la 26 detrás de la 25, sin añadir ni quitar nada.
+
+
+<<<<<< ARCHIVO: src/main/java/com/pocketbuilder/app_wslenytv1792177359057/M3uParser.java (PARTE 24 de 3: principio del archivo) >>>>>>
+package com.pocketbuilder.app_wslenytv1792177359057;
+
+import java.util.ArrayList;
+import java.util.Locale;
+import java.util.Map;
+import java.util.TreeMap;
+
+/**
+ * Lector de listas IPTV (M3U / M3U8) escrito de nuevo desde cero.
+ *
+ * CÓMO FUNCIONA (procesamiento por líneas, sin expresiones regulares):
+ *
+ *  1. El texto se recorre línea a línea (saltos \n, \r\n, \r y \f).
+ *  2. Cada línea se clasifica: etiqueta (#EXTM3U, #EXTINF, #EXTGRP,
+ *     #EXTVLCOPT / #KODIPROP / #EXTHTTP, #EXT-X-..., #PLAYLIST) o dirección.
+ *  3. Los atributos de #EXTINF (tvg-name, tvg-logo, group-title...) se leen con
+ *     un recorrido propio del texto que admite comillas dobles o simples,
+ *     valores sin comillas y espacios alrededor del "=".
+ *     Ese recorrido tiene garantizado el avance: cada vuelta del bucle consume
+ *     siempre al menos un carácter, así que NUNCA puede quedarse colgado.
+ *  4. El BLOQUE COMPLETO del canal se interpreta antes de leer su dirección:
+ *       #EXTINF          → nombre, logo y categoría
+ *       #EXTGRP          → categoría
+ *       #EXTVLCOPT       → http-user-agent, http-referrer/referer, http-origin,
+ *                          http-cookie y cualquier http-<cabecera>
+ *       #KODIPROP        → inputstream.adaptive.stream_headers (cabeceras),
+ *                          license_type, license_key, y otras propiedades
+ *       #EXTHTTP         → JSON con cabeceras: {"User-Agent":"...", ...}
+ *       url|A=B&C=D      → parámetros de cabecera detrás de "|"
+ *  5. La línea de dirección cierra la entrada: se le asocian el nombre, el logo,
+ *     la categoría y TODAS esas cabeceras, y se resuelve si es un enlace relativo
+ *     (usando la dirección de la lista).
+ *
+ * Las directivas de licencia se IDENTIFICAN y se guardan, pero el motor DASH de
+ * LENY TV no descifra contenido protegido: aquí no se simula compatibilidad con
+ * ClearKey ni con ningún otro DRM.
+ *
+ * El lector solo EXTRAE Y VALIDA las entradas: no descarga nada por su cuenta y
+ * no reproduce nada. La descarga la hace {@link Net} y la reproducción el
+ * reproductor ({@link PlayerActivity}); aquí solo se lee el texto recibido.
+ *
+ * Distingue dos cosas que no son lo mismo:
+ *  - Lista de canales IPTV: cada #EXTINF es un canal con su dirección.
+ *  - Lista de reproducción HLS (.m3u8 de un solo vídeo): sus direcciones son
+ *    los trozos o las calidades del mismo vídeo, no canales.
+ *
+ * La lista original NUNCA se modifica: solo se lee.
+ */
+final class M3uParser {
+
+    static final String NO_CATEGORY = "Sin categoría";
+
+    /** Tope de entradas admitidas de una sola lista (evita agotar la memoria). */
+    static final int MAX_CHANNELS = 50000;
+
+    /** Longitud máxima que se lee de una sola línea (protege de textos dañados). */
+    private static final int MAX_LINE_LENGTH = 60000;
+
+    private M3uParser() {
+    }
+
+    /** Resultado de leer una lista. */
+    static final class Result {
+        final ArrayList<Channel> channels = new ArrayList<Channel>();
+        /** Avisos concretos de lo que se encontró durante la lectura. */
+        final ArrayList<String> notes = new ArrayList<String>();
+
+        /** true si lo recibido es un vídeo HLS y no una lista de canales. */
+        boolean mediaPlaylist;
+        String title = "";
+        /** Líneas #EXTINF encontradas. */
+        int extinfCount;
+        /** Líneas de dirección encontradas. */
+        int urlCount;
+        /** Etiquetas #EXT-X-... vistas. */
+        int hlsTags;
+        /** Etiquetas que demuestran que el texto es un HLS de verdad. */
+        int hlsStructural;
+        /**
+         * Etiquetas que SOLO aparecen en una lista de reproducción de vídeo HLS
+         * (#EXT-X-STREAM-INF, #EXT-X-TARGETDURATION, #EXT-X-MEDIA-SEQUENCE,
+         * #EXT-X-ENDLIST, #EXT-X-PLAYLIST-TYPE). Son la única prueba que se
+         * acepta para declarar que el texto es un vídeo y no una lista de canales.
+         */
+        int hlsStrong;
+        int hlsStreamInf;
+        int hlsTargetDuration;
+        int hlsMediaSequence;
+        int hlsEndlist;
+        int hlsPlaylistType;
+        /** Entradas #EXTINF que traían un nombre propio detrás de la coma. */
+        int namedEntries;
+        /** Entradas #EXTINF con duración numérica y con duración mayor que cero. */
+        int numericDurations;
+        int positiveDurations;
+        /** true si al final se conservaron los canales pese a parecer una lista HLS. */
+        boolean keptChannels;
+        /** Líneas que no eran ni etiqueta ni dirección (se ignoraron). */
+        int skippedLines;
+        /** Líneas de una página web (se ignoraron). */
+        int htmlLines;
+        /** Entradas repetidas que se mostraron una sola vez. */
+        int duplicates;
+        /** Líneas de atributos que continuaban el #EXTINF anterior. */
+        int continuationLines;
+        /** Claves ya leídas (dirección + nombre + categoría), para no duplicar. */
+        private final java.util.HashSet<String> seenKeys = new java.util.HashSet<String>();
+        /** Entradas #EXTINF a las que les faltaba la línea de dirección. */
+        int entriesWithoutUrl;
+        /**
+         * Direcciones ALTERNATIVAS del mismo canal (REVISIÓN 53): iban detrás de
+         * la dirección principal del bloque y antes se mostraban como canales
+         * sueltos sin apartado.
+         */
+        int alternatives;
+        /** Canales sin apartado que se colgaron del apartado de su mismo nombre. */
+        int adoptedGroups;
+        /** Líneas de directiva escritas sin la «#» de delante (EXTINF:, KODIPROP:...). */
+        int directivesWithoutHash;
+        /** true si alguna entrada traía datos de canal (logo, grupo, cabeceras). */
+        boolean channelAttributes;
+        /** true si la lista tenía más entradas de las admitidas. */
+        boolean capped;
+        /** Directivas de cabeceras encontradas (#EXTVLCOPT, #KODIPROP, #EXTHTTP). */
+        int headerDirectives;
+        /** Canales con cabeceras propias leídas de su bloque. */
+        int channelsWithHeaders;
+        /** Canales que declaran DRM en su bloque. */
+        int channelsWithLicense;
+        String firstLine = "";
+
+        int categories() {
+            ArrayList<String> seen = new ArrayList<String>();
+            for (int i = 0; i < channels.size(); i++) {
+                String category = channels.get(i).category;
+                if (!seen.contains(category)) seen.add(category);
+            }
+            return seen.size();
+        }
+
+        String summary() {
+            StringBuilder sb = new StringBuilder();
+            sb.append(channels.size()).append(" canales");
+            sb.append(", ").append(categories()).append(" categorías");
+            sb.append(", ").append(extinfCount).append(" líneas #EXTINF");
+            sb.append(", ").append(urlCount).append(" direcciones");
+            if (hlsTags > 0) sb.append(", ").append(hlsTags).append(" etiquetas #EXT-X-");
+            if (hlsStrong > 0) sb.append(" (").append(hlsStrong).append(" sólo de vídeo HLS)");
+            if (namedEntries > 0) sb.append(", ").append(namedEntries).append(" entradas con nombre");
+            if (channelsWithHeaders > 0) sb.append(", ").append(channelsWithHeaders).append(" con cabeceras propias");
+            if (channelsWithLicense > 0) sb.append(", ").append(channelsWithLicense).append(" con DRM declarado");
+            if (alternatives > 0) sb.append(", ").append(alternatives).append(" direcciones alternativas agrupadas");
+            if (duplicates > 0) sb.append(", ").append(duplicates).append(" entradas repetidas");
+            if (continuationLines > 0) sb.append(", ").append(continuationLines).append(" líneas de atributos");
+            if (keptChannels) sb.append(" · se conservaron los canales");
+            if (capped) sb.append(" · se alcanzó el tope de ").append(MAX_CHANNELS).append(" entradas");
+            return sb.toString();
+        }
+
+        /**
+         * Motivo concreto y en lenguaje sencillo de por qué no hay canales.
+         * Devuelve "" cuando sí se han leído canales.
+         */
+        String reason() {
+            if (channels.size() > 0) return "";
+            if (mediaPlaylist) {
+                return "ese enlace es un vídeo HLS, no una lista de canales: trae las etiquetas propias"
+                        + " de una lista de vídeo (" + hlsProof() + "), así que sus direcciones son los"
+                        + " trozos del mismo vídeo. Pulsa REPRODUCIR EL ENLACE para verlo";
+            }
+            if (htmlLines > 0 && extinfCount == 0) {
+                return "lo que respondió el servidor parece una página web, no una lista de canales";
+            }
+            if (extinfCount == 0 && urlCount == 0) {
+                return "el texto recibido no contiene ninguna línea #EXTINF ni ninguna dirección";
+            }
+            if (extinfCount > 0 && urlCount == 0) {
+                return "hay " + extinfCount + " líneas #EXTINF pero ninguna línea con la dirección del canal";
+            }
+            if (entriesWithoutUrl > 0) {
+                return "las entradas de la lista no llevan dirección: " + entriesWithoutUrl
+                        + " de ellas se quedaron sin enlace";
+            }
+            return "no se reconoció ninguna entrada de canal en el texto recibido";
+        }
+
+        /** Nombres de las etiquetas de vídeo HLS encontradas, para el motivo. */
+        String hlsProof() {
+            StringBuilder sb = new StringBuilder();
+            if (hlsStreamInf > 0) sb.append("#EXT-X-STREAM-INF, ");
+            if (hlsTargetDuration > 0) sb.append("#EXT-X-TARGETDURATION, ");
+            if (hlsMediaSequence > 0) sb.append("#EXT-X-MEDIA-SEQUENCE, ");
+            if (hlsEndlist > 0) sb.append("#EXT-X-ENDLIST, ");
+            if (hlsPlaylistType > 0) sb.append("#EXT-X-PLAYLIST-TYPE, ");
+            if (sb.length() == 0) return "etiquetas #EXT-X-";
+            return sb.substring(0, sb.length() - 2);
+        }
+    }
+
+    /** Datos que se van juntando antes de leer la dirección del canal. */
+    private static final class Pending {
+        String name;
+        String logo = "";
+        String group;
+        final TreeMap<String, String> headers = new TreeMap<String, String>();
+        final TreeMap<String, String> headerSources = new TreeMap<String, String>();
+        String licenseType = "";
+        String licenseKey = "";
+        String licenseStreamHeaders = "";
+        boolean open;
+        /** El bloque ya aportó su dirección: las siguientes son alternativas. */
+        boolean urlTaken;
+
+        void reset() {
+            name = null;
+            logo = "";
+            group = null;
+            headers.clear();
+            headerSources.clear();
+            licenseType = "";
+            licenseKey = "";
+            licenseStreamHeaders = "";
+            open = false;
+            urlTaken = false;
+        }
+
+        /** Guarda una cabecera del bloque del canal, con su origen. */
+        void putHeader(String headerName, String headerValue, String source) {
+            String key = Headers.canonical(headerName);
+            if (key.length() == 0) return;
+            String clean = Headers.value(headerValue);
+            if (clean.length() == 0) return;
+            headers.put(key, clean);
+            headerSources.put(key, source == null ? "" : source);
+        }
+    }
+
+    /** Datos leídos de la parte de atributos de un #EXTINF. */
+    private static final class Extinf {
+        /** Nombre de la guía (tvg-name) o, si no hay, el nombre corto. */
+        String name = "";
+        /** Identificador de la guía (tvg-id). NO es el nombre del canal. */
+        String id = "";
+        String logo = "";
+        String group = "";
+        boolean anyAttribute;
+    }
+
+    // ------------------------------------------------------------------ lectura
+
+    static Result parse(String text) {
+        return parse(text, null);
+    }
+
+    /**
+     * Lee una lista completa.
+     *
+     * @param text    contenido del archivo o de la descarga.
+     * @param baseUrl dirección de la lista (para resolver enlaces relativos).
+     *                Puede ser null.
+     */
+    static Result parse(String text, String baseUrl) {
+        Result result = new Result();
+        if (text == null || text.length() == 0) {
+            result.notes.add("no se recibió ningún texto que leer");
+            return result;
+        }
+
+        Pending pending = new Pending();
+        boolean header = false;
+
+        // El texto se recorre con un lector de líneas que entiende TODOS los
+        // saltos: \n, \r\n, \r solo (listas guardadas desde un Mac o generadas
+        // por algunos paneles), \f y los separadores Unicode. Antes solo se
+        // cortaba por \n: una lista con saltos \r llegaba entera como una sola
+        // línea y no se reconocía ningún canal.
+        LineScanner scanner = new LineScanner(text);
+        String raw;
+        while ((raw = scanner.next()) != null) {
+            if (raw.length() > MAX_LINE_LENGTH) raw = raw.substring(0, MAX_LINE_LENGTH);
+
+            String line = trimAll(raw);
+            if (line.length() == 0) continue;
+            if (result.firstLine.length() == 0) result.firstLine = clip(line, 160);
+
+            // REVISIÓN 53: algunas listas escriben las directivas SIN la «#» de
+            // delante («EXTINF:-1 ...», «KODIPROP:inputstream.adaptive...»).
+            // Antes esas líneas se tomaban por direcciones de vídeo y acababan
+            // como canales llamados «EXTINF:-1» o «KODIPROP:inputstream.adapti…»
+            // amontonados en «Sin categoría». Aquí se tratan como la directiva
+            // que son.
+            char first = line.charAt(0);
+            if (first != '#' && missingHashDirective(line)) {
+                line = "#" + line;
+                first = '#';
+                result.directivesWithoutHash++;
+            }
+            if (first == '#') {
+                String upper = line.toUpperCase(Locale.US);
+                if (upper.startsWith("#EXTM3U")) {
+                    header = true;
+                } else if (upper.startsWith("#EXTINF")) {
+                    if (pending.open && !pending.urlTaken) result.entriesWithoutUrl++;
+                    pending.reset();
+                    pending.open = true;
+                    applyExtinf(pending, line, result);
+                } else if (upper.startsWith("#EXTGRP")) {
+                    String group = valueAfterColon(line);
+                    if (group.length() > 0) {
+                        pending.group = group;
+                        result.channelAttributes = true;
+                    }
+                } else if (upper.startsWith("#EXTVLCOPT") || upper.startsWith("#EXTVLC")
+                        || upper.startsWith("#KODIPROP") || upper.startsWith("#EXTHTTP")) {
+                    readHeaderDirective(pending, line, result);
+                } else if (upper.startsWith("#EXT-X-")) {
+                    result.hlsTags++;
+                    if (isHlsStructureTag(upper)) result.hlsStructural++;
+                    // Solo estas etiquetas prueban que el texto es un vídeo HLS.
+                    if (upper.startsWith("#EXT-X-STREAM-INF")) {
+                        result.hlsStreamInf++;
+                        result.hlsStrong++;
+                    } else if (upper.startsWith("#EXT-X-TARGETDURATION")) {
+                        result.hlsTargetDuration++;
+                        result.hlsStrong++;
+                    } else if (upper.startsWith("#EXT-X-MEDIA-SEQUENCE")) {
+                        result.hlsMediaSequence++;
+                        result.hlsStrong++;
+                    } else if (upper.startsWith("#EXT-X-ENDLIST")) {
+                        result.hlsEndlist++;
+                        result.hlsStrong++;
+                    } else if (upper.startsWith("#EXT-X-PLAYLIST-TYPE")) {
+                        result.hlsPlaylistType++;
+                        result.hlsStrong++;
+                    }
+                } else if (upper.startsWith("#PLAYLIST")) {
+                    String title = valueAfterColon(line);
+                    if (title.length() > 0 && result.title.length() == 0) result.title = title;
+                }
+                continue;
+            }
+
+            if (first == '<') {
+                // Una página web no es una lista: sus líneas se ignoran.
+                result.htmlLines++;
+                continue;
+            }
+
+            // Algunas listas reparten los atributos del canal en varias líneas:
+            //   #EXTINF:-1 tvg-id="dep1"
+            //        group-title="Deportes",Deportes Uno
+            // Esas líneas son METADATOS, no direcciones: se aplican al canal que
+            // está abierto y nunca se confunden con un enlace de reproducción.
+            if (pending.open && looksLikeAttributeLine(line)) {
+                applyContinuation(pending, line, result);
+                result.continuationLines++;
+                continue;
+            }
+
+            // Línea de dirección: cierra la entrada que estuviera pendiente y, si
+            // lleva parámetros detrás de "|", se leen como cabeceras del canal.
+            String url = readUrlLine(line, pending);
+
+            if (url.length() == 0) {
+                result.skippedLines++;
+                continue;
+            }
+            if (!looksLikeAddress(url)) {
+                result.skippedLines++;
+                if (result.notes.size() < 6) {
+                    result.notes.add("se ignoró una línea que no es una dirección: " + clip(url, 60));
+                }
+                continue;
+            }
+
+            url = resolve(baseUrl, url);
+            result.urlCount++;
+            if (result.channels.size() >= MAX_CHANNELS) {
+                result.capped = true;
+                pending.reset();
+                continue;
+            }
+            // REVISIÓN 53: el bloque ya tenía su dirección y llega otra dirección
+            // sin un #EXTINF nuevo por medio: es una ALTERNATIVA del mismo canal
+            // (otro servidor, «opción 2», index.m3u8, el conjunto de Kodi...). Se
+            // guarda con su canal y NO se añade como canal suelto.
+            if (pending.open && pending.urlTaken) {
+                Channel owner = result.channels.isEmpty() ? null
+                        : result.channels.get(result.channels.size() - 1);
+                if (owner != null && owner.addAlternative(url)) result.alternatives++;
+                continue;
+            }
+            String name = pending.name != null && pending.name.length() > 0 ? pending.name : guessName(url);
+            String category = pending.group == null || pending.group.length() == 0
+                    ? NO_CATEGORY : pending.group;
+            // Duplicados accidentales: hay listas que repiten la misma entrada
+            // (a veces por una fusión de dos listas). Se conserva la primera y se
+            // cuentan las demás, en lugar de mostrar el mismo canal varias veces.
+            String dedupeKey = url + '\u0000' + name + '\u0000' + category;
+            if (!result.seenKeys.add(dedupeKey)) {
+                result.duplicates++;
+                pending.reset();
+                continue;
+            }
+            result.channels.add(new Channel(name, url, pending.logo, pending.group,
+                    pending.headers, pending.headerSources,
+                    pending.licenseType, pending.licenseKey, pending.licenseStreamHeaders));
+            if (!pending.headers.isEmpty()) result.channelsWithHeaders++;
+            if (pending.licenseType.length() > 0 || pending.licenseKey.length() > 0) {
+                result.channelsWithLicense++;
+            }
+            // El bloque SIGUE abierto: si detrás vienen más direcciones son
+            // alternativas de este mismo canal, y sus #EXTVLCOPT / #KODIPROP
+            // siguen siendo de este canal.
+            pending.urlTaken = true;
+        }
+
+        if (pending.open && !pending.urlTaken) result.entriesWithoutUrl++;
+        // Entradas sin apartado que son el mismo canal que otra que sí lo tiene:
+        // se colocan en su apartado en vez de amontonarse en «Sin categoría».
+        adoptGroups(result);
+        if (!header && (result.extinfCount > 0 || result.urlCount > 0)) {
+            result.notes.add("la lista no empezaba por #EXTM3U, se ha leído igualmente");
+        }
+        if (result.skippedLines > 0) {
+            result.notes.add("se ignoraron " + result.skippedLines + " líneas sin dirección válida");
+        }
+        if (result.alternatives > 0) {
+            result.notes.add(result.alternatives + " dirección(es) alternativas de un mismo canal se guardaron"
+                    + " con su canal: son la misma emisión en otro enlace y no aparecen como canales aparte");
+        }
+        if (result.adoptedGroups > 0) {
+            result.notes.add(result.adoptedGroups + " canal(es) sin apartado se colocaron en el apartado de su mismo"
+                    + " nombre en lugar de quedar en «Sin categoría»");
+        }
+        if (result.directivesWithoutHash > 0) {
+            result.notes.add(result.directivesWithoutHash + " línea(s) de directiva venían sin la «#» delante"
+                    + " (EXTINF:, KODIPROP:...) y se leyeron como directiva, no como canal");
+        }
+        if (result.headerDirectives > 0) {
+            result.notes.add("se leyeron " + result.headerDirectives + " directivas de cabeceras"
+                    + " (#EXTVLCOPT, #KODIPROP, #EXTHTTP o parámetros tras \"|\")");
+        }
+        if (result.channelsWithHeaders > 0) {
+            result.notes.add(result.channelsWithHeaders + " canal(es) traen sus propias cabeceras HTTP"
+                    + " (User-Agent, Referer, Origin, Cookie...): se aplican a ese canal antes de reproducir");
+        }
+        if (result.duplicates > 0) {
+            result.notes.add(result.duplicates + " entrada(s) repetidas en la lista: se muestran una sola vez");
+        }
+        if (result.continuationLines > 0) {
+            result.notes.add(result.continuationLines + " línea(s) de atributos continuaban el #EXTINF anterior"
+                    + " y se aplicaron a su canal (no se tomaron por direcciones)");
+        }
+        if (result.entriesWithoutUrl > 0) {
+            result.notes.add(result.entriesWithoutUrl + " entrada(s) de la lista no llevan dirección"
+                    + " y no se han podido añadir");
+        }
+        if (result.channelsWithLicense > 0) {
+            result.notes.add(result.channelsWithLicense + " canal(es) declaran DRM"
+                    + " (inputstream.adaptive.license_type / license_key): el motor DASH de LENY TV solo lo"
+                    + " identifica y NO descifra contenido protegido");
+        }
+
+        // ¿Es un vídeo HLS o una lista de canales?
+        //
+        // REGLA ESTRICTA: solo se declara "vídeo" cuando hay PRUEBAS
+        // ESTRUCTURALES de que lo es, es decir, cuando aparecen etiquetas que
+        // únicamente existen en una lista de reproducción de vídeo HLS
+        // (#EXT-X-STREAM-INF, #EXT-X-TARGETDURATION, #EXT-X-MEDIA-SEQUENCE,
+        // #EXT-X-ENDLIST o #EXT-X-PLAYLIST-TYPE) y además la lista no trae
+        // ningún dato de canal (tvg-name, tvg-logo, group-title, cabeceras...).
+        //
+        // Antes bastaba con que todas las duraciones de los #EXTINF fueran
+        // números positivos (algo habitual en listas de películas y series) para
+        // vaciar el catálogo entero con el aviso "es un vídeo HLS". Eso dejaba la
+        // cuadrícula vacía aunque la lista se hubiera leído perfectamente.
+        boolean strongHls = result.hlsStrong > 0;
+        boolean media = strongHls && !result.channelAttributes;
+        if (media && result.namedEntries >= 2 && result.channels.size() >= 2) {
+            // Aunque haya etiquetas HLS, si la lista trae varias entradas con
+            // nombre propio se conservan como canales: es más grave perder un
+            // catálogo entero que mostrar de más.
+            media = false;
+            result.keptChannels = true;
+            result.notes.add("la lista trae " + result.namedEntries
+                    + " entradas con nombre propio: se conservan como canales y no se trata como un vídeo");
+        }
+        if (!media && result.extinfCount > 0 && result.numericDurations == result.extinfCount
+                && result.positiveDurations == result.extinfCount) {
+            // Caso típico de listas de películas y series: todas las entradas
+            // llevan duración positiva. Eso NO significa que sea un vídeo: cada
+            // entrada sigue siendo un canal con su dirección.
+            result.notes.add("todas las entradas traen duración (" + result.positiveDurations
+                    + "): se tratan como canales de la lista, no como trozos de un mismo vídeo");
+        }
+        result.mediaPlaylist = media;
+        if (media) {
+            if (!result.channels.isEmpty()) {
+                result.notes.add("las " + result.channels.size() + " direcciones leídas son trozos del mismo vídeo HLS");
+            }
+            result.channels.clear();
+        }
+        return result;
+    }
+<<<<<< FIN PARCIAL DE LA PARTE 24: el archivo continua en la PARTE 25 >>>>>>
+
+
+FIN DE LA PARTE 24. El resto de M3uParser.java esta en la parte 25.

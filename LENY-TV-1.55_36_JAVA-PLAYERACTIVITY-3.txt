@@ -1,0 +1,300 @@
+LENY TV 1.55 — PARTE 36 DE LA EXPORTACION DEL CODIGO FUENTE
+===========================================================
+Contenido LITERAL. Continuacion de PlayerActivity.java (se pega JUSTO DETRAS de
+la parte 35, sin repetir lineas).
+Ruta original: src/main/java/com/pocketbuilder/app_wslenytv1792177359057/PlayerActivity.java
+
+
+<<<<<< CONTINUACION: src/main/java/com/pocketbuilder/app_wslenytv1792177359057/PlayerActivity.java >>>>>>
+    private View buildTopBar() {
+        // La barra superior ocupa DOS FILAS: arriba el nombre del canal y los
+        // botones de ventana; debajo, CALIDAD e IMAGEN. Antes todo iba en la misma
+        // fila con anchos fijos y en pantallas estrechas (o en vertical) los
+        // últimos botones se salían de su cuadro; ahora cada fila cabe entera.
+        topBar = new LinearLayout(this);
+        topBar.setOrientation(LinearLayout.VERTICAL);
+        topBar.setPadding(Ui.dpi(this, 10), Ui.dpi(this, 8), Ui.dpi(this, 10), Ui.dpi(this, 6));
+        android.graphics.drawable.GradientDrawable shade = new android.graphics.drawable.GradientDrawable(
+                android.graphics.drawable.GradientDrawable.Orientation.TOP_BOTTOM,
+                new int[]{0xE6000000, 0x00000000});
+        topBar.setBackground(shade);
+
+        LinearLayout firstRow = new LinearLayout(this);
+        firstRow.setOrientation(LinearLayout.HORIZONTAL);
+        firstRow.setGravity(Gravity.CENTER_VERTICAL);
+
+        TextView back = Ui.iconButton(this, Icons.back(this, Ui.TEXT), "Volver a la lista de canales", 44f);
+        back.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                finish();
+            }
+        });
+        firstRow.addView(back);
+
+        LinearLayout texts = new LinearLayout(this);
+        texts.setOrientation(LinearLayout.VERTICAL);
+        topTitle = Ui.text(this, "", 16f, Ui.TEXT, true);
+        topTitle.setMaxLines(1);
+        topTitle.setEllipsize(TextUtils.TruncateAt.END);
+        texts.addView(topTitle);
+        topSubtitle = Ui.text(this, "", 11f, Ui.TEXT_DIM, false);
+        topSubtitle.setMaxLines(1);
+        topSubtitle.setEllipsize(TextUtils.TruncateAt.END);
+        texts.addView(topSubtitle);
+        LinearLayout.LayoutParams textParams = new LinearLayout.LayoutParams(0,
+                LinearLayout.LayoutParams.WRAP_CONTENT, 1f);
+        textParams.leftMargin = Ui.dpi(this, 10);
+        firstRow.addView(texts, textParams);
+
+        qualityButton = barPlate("Calidad", "Elegir la calidad de vídeo", new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                openQualityPanel();
+            }
+        });
+        LinearLayout chipRow = new LinearLayout(this);
+        chipRow.setOrientation(LinearLayout.HORIZONTAL);
+        chipRow.setGravity(Gravity.END);
+        chipRow.addView(qualityButton);
+
+        aspectButton = barPlate("Imagen", "Ajustar la imagen en pantalla", new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                openAspectPanel();
+            }
+        });
+        chipRow.addView(aspectButton);
+
+        TextView settings = Ui.iconButton(this, Icons.gear(this, Ui.TEXT), "Ajustes del reproductor", 44f);
+        settings.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                openSettingsPanel();
+            }
+        });
+        firstRow.addView(settings);
+
+        fullscreenButton = Ui.iconButton(this, Icons.expand(this, Ui.TEXT), "Pantalla completa", 44f);
+        fullscreenButton.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                applyImmersive(!immersive);
+                scheduleHide();
+            }
+        });
+        firstRow.addView(fullscreenButton);
+
+        drawerButton = Ui.iconButton(this, Icons.list(this, Ui.TEXT), "Lista de canales", 44f);
+        drawerButton.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                openDrawer();
+            }
+        });
+        firstRow.addView(drawerButton);
+
+        topBar.addView(firstRow, new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT));
+        LinearLayout.LayoutParams chipParams = new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT);
+        chipParams.topMargin = Ui.dpi(this, 4);
+        topBar.addView(chipRow, chipParams);
+
+        FrameLayout.LayoutParams params = new FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.WRAP_CONTENT);
+        params.gravity = Gravity.TOP;
+        topBar.setLayoutParams(params);
+        return topBar;
+    }
+
+    private View buildBottomBar() {
+        // La banda inferior se reparte en DOS FILAS:
+        //   1. anterior / reproducir / siguiente y el tiempo del canal.
+        //   2. volumen y brillo, cada deslizador ocupando el espacio que sobra.
+        // Antes iba todo en una sola fila con anchos fijos (150 dp + 110 dp para los
+        // deslizadores): en un teléfono en vertical, o en horizontal pequeño, la
+        // suma superaba el ancho de la pantalla y los últimos controles se salían
+        // de su cuadro. Con dos filas y anchos elásticos, todo queda dentro.
+        bottomBar = new LinearLayout(this);
+        bottomBar.setOrientation(LinearLayout.VERTICAL);
+        bottomBar.setGravity(Gravity.CENTER_HORIZONTAL);
+        bottomBar.setPadding(Ui.dpi(this, 10), Ui.dpi(this, 8), Ui.dpi(this, 10), Ui.dpi(this, 8));
+        // Banda de controles pegada al borde inferior (como en el reproductor de
+        // referencia): el fondo se oscurece abajo y se desvanece hacia arriba, así
+        // los botones se leen bien sin tapar la imagen.
+        android.graphics.drawable.GradientDrawable shade = new android.graphics.drawable.GradientDrawable(
+                android.graphics.drawable.GradientDrawable.Orientation.BOTTOM_TOP,
+                new int[]{0xF2000000, 0x99000000, 0x00000000});
+        bottomBar.setBackground(shade);
+
+        LinearLayout transport = new LinearLayout(this);
+        transport.setOrientation(LinearLayout.HORIZONTAL);
+        transport.setGravity(Gravity.CENTER_VERTICAL);
+
+        prevButton = barPlate("◀◀", "Canal anterior", new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                playIndex(index - 1);
+            }
+        });
+        transport.addView(prevButton);
+
+        playButton = barPlate("▶", "Reproducir o pausar", new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                togglePlay();
+            }
+        });
+        // (Bloque anterior del reproductor: ya no se usa. La barra que se ve es la
+        // de la captura, creada en buildBottomBarSkin.)
+        transport.addView(playButton);
+
+        nextButton = barPlate("▶▶", "Canal siguiente", new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                playIndex(index + 1);
+            }
+        });
+        transport.addView(nextButton);
+
+        // El estado y el tiempo van en el centro de la fila, con ancho elástico.
+        timeView = Ui.text(this, "--:--", 13f, Ui.TEXT, true);
+        timeView.setTypeface(android.graphics.Typeface.MONOSPACE);
+        timeView.setGravity(Gravity.CENTER);
+        timeView.setMaxLines(1);
+        timeView.setEllipsize(android.text.TextUtils.TruncateAt.END);
+        timeView.setContentDescription("Estado y tiempo de reproducción");
+        LinearLayout.LayoutParams timeParams = new LinearLayout.LayoutParams(0,
+                LinearLayout.LayoutParams.WRAP_CONTENT, 1f);
+        timeParams.leftMargin = Ui.dpi(this, 12);
+        timeParams.rightMargin = Ui.dpi(this, 8);
+        transport.addView(timeView, timeParams);
+
+        LinearLayout.LayoutParams transportParams = new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT);
+        bottomBar.addView(transport, transportParams);
+
+        // Segunda fila: volumen y brillo. Los dos deslizadores comparten el ancho
+        // disponible, así que no se salen ni en vertical ni en pantallas pequeñas.
+        LinearLayout sliders = new LinearLayout(this);
+        sliders.setOrientation(LinearLayout.HORIZONTAL);
+        sliders.setGravity(Gravity.CENTER_VERTICAL);
+
+        TextView volumeLabel = Ui.text(this, "VOL", 11f, Ui.TEXT_DIM, true);
+        volumeLabel.setPadding(0, 0, Ui.dpi(this, 6), 0);
+        sliders.addView(volumeLabel);
+
+        volumeBar = new SeekBar(this);
+        volumeBar.setMax(100);
+        volumeBar.setProgress(volumePercent());
+        volumeBar.setContentDescription("Volumen");
+        volumeBar.setMinimumHeight(Ui.dpi(this, 44));
+        volumeBar.setProgressTintList(ColorStateList.valueOf(Ui.RED));
+        volumeBar.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener() {
+            @Override
+            public void onProgressChanged(SeekBar seekBar, int value, boolean fromUser) {
+                if (fromUser) {
+                    setVolumePercent(value / 100f);
+                    showGestureIndicator("VOLUMEN", value);
+                }
+            }
+
+            @Override
+            public void onStartTrackingTouch(SeekBar seekBar) {
+                ui.removeCallbacks(hideControls);
+            }
+
+            @Override
+            public void onStopTrackingTouch(SeekBar seekBar) {
+                scheduleHide();
+            }
+        });
+        sliders.addView(volumeBar, new LinearLayout.LayoutParams(
+                0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f));
+
+        TextView brightness = Ui.text(this, "BRILLO", 11f, Ui.TEXT_DIM, true);
+        brightness.setPadding(Ui.dpi(this, 10), 0, Ui.dpi(this, 6), 0);
+        brightness.setContentDescription("Brillo de la app: desliza arriba o abajo en la mitad derecha");
+        sliders.addView(brightness);
+
+        SeekBar brightnessBar = new SeekBar(this);
+        brightnessBar.setMax(100);
+        brightnessBar.setProgress(Math.round(brightnessValue() * 100f));
+        brightnessBar.setContentDescription("Brillo de la aplicación");
+        brightnessBar.setProgressTintList(ColorStateList.valueOf(Ui.BLUE));
+        brightnessBar.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener() {
+            @Override
+            public void onProgressChanged(SeekBar seekBar, int value, boolean fromUser) {
+                if (fromUser) {
+                    setBrightness(Math.max(0.05f, value / 100f));
+                    showGestureIndicator("BRILLO", value);
+                }
+            }
+
+            @Override
+            public void onStartTrackingTouch(SeekBar seekBar) {
+                ui.removeCallbacks(hideControls);
+            }
+
+            @Override
+            public void onStopTrackingTouch(SeekBar seekBar) {
+                scheduleHide();
+            }
+        });
+        brightnessBar.setMinimumHeight(Ui.dpi(this, 44));
+        sliders.addView(brightnessBar, new LinearLayout.LayoutParams(
+                0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f));
+
+        LinearLayout.LayoutParams sliderParams = new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT);
+        sliderParams.topMargin = Ui.dpi(this, 4);
+        bottomBar.addView(sliders, sliderParams);
+
+        FrameLayout.LayoutParams params = new FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.WRAP_CONTENT);
+        // Banda ordenada en dos filas: transporte y tiempo arriba; volumen y brillo
+        // debajo, sin salirse del ancho de la pantalla.
+        params.gravity = Gravity.BOTTOM;
+        params.bottomMargin = Ui.dpi(this, 4);
+        bottomBar.setLayoutParams(params);
+        return bottomBar;
+    }
+
+    /**
+     * Cartel con el nombre y los datos del canal, como en el reproductor de
+     * referencia: aparece al abrir un canal o al cambiar de uno a otro y se retira
+     * solo para no tapar la imagen.
+     */
+    // ------------------------------------------ barras copiadas de la captura
+
+    /**
+     * Botón cuadrado de las barras nuevas: dibuja su icono en el centro exacto del
+     * cuadro, sin fondo visible (en la captura los botones van sobre el vídeo).
+     */
+    private View skinButton(Drawable icon, float sizeDp, String description) {
+        PlayerIcons.IconButton button = new PlayerIcons.IconButton(this, icon, sizeDp, 0.56f);
+        button.setContentDescription(description);
+        button.setClickable(true);
+        button.setFocusable(true);
+        button.setBackground(Ui.buttonBg(this, 0x00000000, 0x33FFFFFF, 0x00000000, 6f));
+        return button;
+    }
+
+    /** Cambia el dibujo de un botón, sea del tipo nuevo o del tipo anterior. */
+    private void setButtonIcon(View button, Drawable icon) {
+        if (button == null || icon == null) return;
+        if (button instanceof PlayerIcons.IconButton) {
+            ((PlayerIcons.IconButton) button).setIcon(icon);
+        } else if (button instanceof TextView) {
+            icon.setBounds(0, 0, Ui.dpi(this, 23), Ui.dpi(this, 23));
+            ((TextView) button).setCompoundDrawables(null, icon, null, null);
+        }
+    }
+
+    private LinearLayout.LayoutParams skinParams(float leftMarginDp) {
+        LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT);
+        if (leftMarginDp > 0f) params.leftMargin = Ui.dpi(this, leftMarginDp);
+        return params;
+    }

@@ -1,0 +1,222 @@
+LENY TV 1.55 — PARTE 33 DE LA EXPORTACION DEL CODIGO FUENTE
+===========================================================
+Contenido LITERAL del archivo Java, copiado del proyecto real con read_file.
+Ruta original: src/main/java/com/pocketbuilder/app_wslenytv1792177359057/SelfTest.java
+Tamano original: 34.784 bytes.
+Esta es la SEGUNDA mitad: se pega JUSTO DETRAS del final de la parte 32, sin
+repetir nada, y con ella queda SelfTest.java completo.
+
+
+<<<<<< CONTINUACION (FINAL): src/main/java/com/pocketbuilder/app_wslenytv1792177359057/SelfTest.java >>>>>>
+    /** Lista de muestra con el bloque completo de cada canal. */
+    private static String sampleChannelBlock() {
+        return "#EXTM3U\n"
+                + "#EXTINF:-1 tvg-name=\"Prueba Uno\" group-title=\"Pruebas\",Prueba Uno\n"
+                + "#EXTVLCOPT:http-user-agent=Antiguo/1.0\n"
+                + "#EXTVLCOPT:network-caching=3000\n"
+                + "#EXTHTTP:{\"Origin\":\"https://bloque.ejemplo\",\"Cookie\":\"sesion=abc123\"}\n"
+                + "https://canal.ejemplo/directo/index.mpd|User-Agent=Enlace%2F2.0"
+                + "&Referer=https%3A%2F%2Fenlace.ejemplo%2F&X-Dispositivo=android\n"
+                + "#EXTINF:-1 tvg-name=\"Prueba Dos\" group-title=\"Pruebas\",Prueba Dos\n"
+                + "#KODIPROP:inputstream.adaptive.stream_headers=User-Agent=Kodi%2F1.0"
+                + "&Referer=https%3A%2F%2Fkodi.ejemplo%2F\n"
+                + "#KODIPROP:inputstream.adaptive.license_type=clearkey\n"
+                + "#KODIPROP:inputstream.adaptive.license_key=oculto:clave-de-prueba\n"
+                + "https://canal.ejemplo/protegido/manifiesto\n"
+                + "#EXTINF:-1 tvg-name=\"Prueba Tres\" group-title=\"Pruebas\",Prueba Tres\n"
+                + "#EXTVLCOPT:http-referrer=https://bloque.ejemplo/portada\n"
+                + "https://canal.ejemplo/directo/tercero.ts\n";
+    }
+
+    private static void test(StringBuilder sb, String name, String text, String baseUrl,
+                             int expectedChannels, String expectedCategory) {
+        M3uParser.Result result;
+        long started = android.os.SystemClock.elapsedRealtime();
+        try {
+            result = M3uParser.parse(text, baseUrl);
+        } catch (Throwable t) {
+            sb.append("\n· ").append(name).append("\n    ERROR al leer: ").append(Net.describe(t)).append('\n');
+            sb.append("    RESULTADO: revisar\n");
+            return;
+        }
+        long elapsed = android.os.SystemClock.elapsedRealtime() - started;
+        sb.append("\n· ").append(name).append('\n');
+        sb.append("    #EXTINF: ").append(result.extinfCount)
+                .append(" · canales: ").append(result.channels.size())
+                .append(" · categorías: ").append(result.categories())
+                .append(" · ").append(elapsed).append(" ms\n");
+        if (result.mediaPlaylist) sb.append("    aviso: es una lista de vídeo HLS, no una lista de canales\n");
+        for (int i = 0; i < result.notes.size(); i++) {
+            sb.append("    aviso del lector: ").append(result.notes.get(i)).append('\n');
+        }
+        if (result.channels.size() > 0) {
+            Channel first = result.channels.get(0);
+            sb.append("    primero: ").append(first.name)
+                    .append(" → ").append(shorten(first.url))
+                    .append('\n');
+            sb.append("    logo: ").append(first.logo.length() > 0 ? "sí" : "no")
+                    .append(" · categoría: ").append(first.category).append('\n');
+        }
+        boolean ok = result.channels.size() == expectedChannels
+                && (expectedCategory.length() == 0 || hasCategory(result, expectedCategory));
+        sb.append(ok ? "    RESULTADO: correcto" : "    RESULTADO: revisar (se esperaban "
+                + expectedChannels + " canales"
+                + (expectedCategory.length() == 0 ? "" : " y la categoría " + expectedCategory) + ")");
+        if (!ok && result.channels.isEmpty() && result.reason().length() > 0) {
+            sb.append(" — motivo: ").append(result.reason());
+        }
+        sb.append('\n');
+    }
+
+    private static boolean hasCategory(M3uParser.Result result, String category) {
+        for (int i = 0; i < result.channels.size(); i++) {
+            if (category.equalsIgnoreCase(result.channels.get(i).category)) return true;
+        }
+        return false;
+    }
+
+    /** Lista de 3000 entradas: comprueba que el lector termina y cuánto tarda. */
+    private static String testLarge() {
+        StringBuilder text = new StringBuilder();
+        text.append("#EXTM3U\n");
+        for (int i = 1; i <= 3000; i++) {
+            text.append("#EXTINF:-1 tvg-name=\"Canal ").append(i)
+                    .append("\" group-title=\"Grupo ").append(i % 20)
+                    .append("\",Canal ").append(i).append('\n');
+            text.append("http://servidor.ejemplo/live/").append(i).append(".ts\n");
+        }
+        long started = android.os.SystemClock.elapsedRealtime();
+        M3uParser.Result result = M3uParser.parse(text.toString(), null);
+        long elapsed = android.os.SystemClock.elapsedRealtime() - started;
+        if (result.channels.size() != 3000) {
+            return "se esperaban 3000 canales y se leyeron " + result.channels.size()
+                    + " (" + result.reason() + ")";
+        }
+        if (elapsed > 2000) return "tardó " + elapsed + " ms, demasiado para no bloquear la pantalla";
+        return "";
+    }
+
+    /** Devuelve "" si todo fue bien o el error concreto. */
+    private static String testUtf16() {
+        try {
+            String text = "#EXTM3U\r\n#EXTINF:-1 tvg-name=\"Uno\" group-title=\"Prueba\",Canal uno\r\nhttp://servidor/prueba/1.ts\r\n";
+            byte[] body = text.getBytes("UTF-16LE");
+            byte[] data = new byte[body.length + 2];
+            data[0] = (byte) 0xFF;
+            data[1] = (byte) 0xFE;
+            System.arraycopy(body, 0, data, 2, body.length);
+            String decoded = Net.decode(data, null);
+            M3uParser.Result result = M3uParser.parse(decoded, null);
+            if (result.channels.size() != 1) return "no se leyó bien (canales: " + result.channels.size() + ")";
+            return "";
+        } catch (Throwable t) {
+            return Net.describe(t);
+        }
+    }
+
+    private static String testNotAPlaylist() {
+        try {
+            String zip = "PK\u0003\u0004\u0014\u0000\u0000\u0000\b\u0000\u0000\u0000\u0000\u0000contenido";
+            if (M3uParser.looksLikePlaylist(zip)) return "un archivo comprimido se confundió con una lista";
+            if (M3uParser.parse(sampleHtml(), null).channels.size() != 0) {
+                return "la página web se leyó como canales";
+            }
+            if (!Net.looksLikeHtml(sampleHtml())) return "la página web no se detectó como página";
+            return "";
+        } catch (Throwable t) {
+            return Net.describe(t);
+        }
+    }
+
+    private static String status(String name, String error) {
+        return "· " + name + ": " + (error.length() == 0 ? "correcto" : "revisar — " + error) + "\n";
+    }
+
+    private static String shorten(String url) {
+        if (url == null) return "";
+        if (url.length() <= 60) return url;
+        return url.substring(0, 40) + "…" + url.substring(url.length() - 15);
+    }
+
+    private static String sampleWithAttributes() {
+        return "#EXTM3U url-tvg=\"http://guia.ejemplo/tv.xml\"\n"
+                + "#EXTINF:-1 tvg-id=\"Dep1.es\" tvg-name=\"Deportes Uno\" tvg-logo=\"http://guia.ejemplo/logos/dep1.png\" group-title=\"Deportes\",Deportes Uno HD\n"
+                + "http://servidor.ejemplo:8080/live/usuario/clave/101.ts\n"
+                + "#EXTINF:-1 tvg-id=\"Cine.es\" tvg-name=\"Cine Acción\" tvg-logo=\"http://guia.ejemplo/logos/cine.png\" group-title=\"Cine\",Cine Acción\n"
+                + "http://servidor.ejemplo:8080/live/usuario/clave/102.ts\n"
+                + "#EXTINF:0 group-title=\"Deportes\",Deportes Dos\n"
+                + "http://servidor.ejemplo:8080/live/usuario/clave/103.ts\n";
+    }
+
+    private static String sampleWindows() {
+        return "\uFEFF#EXTM3U\r\n"
+                + "#EXTINF:-1 tvg-name=\"Series Uno\" group-title=\"Series\",Series Uno\r\n"
+                + "http://otro.ejemplo/live/1.ts\r\n"
+                + "#EXTINF:-1 tvg-name=\"Series Dos\" group-title=\"Series\",Series Dos\r\n"
+                + "http://otro.ejemplo/live/2.ts\r\n"
+                + "#EXTINF:-1 tvg-name=\"P2P\" group-title=\"Series\",Canal por acestream\r\n"
+                + "acestream://0123456789abcdef0123456789abcdef01234567\r\n";
+    }
+
+    private static String sampleExtgrp() {
+        return "#EXTM3U\n"
+                + "#EXTINF:-1 tvg-name=\"Info 24\",Info 24\n"
+                + "#EXTGRP:Noticias\n"
+                + "#EXTVLCOPT:http-user-agent=MiReproductor/1.0\n"
+                + "#EXTVLCOPT:http-referrer=http://proveedor.ejemplo/\n"
+                + "http://proveedor.ejemplo/live/info24/index.m3u8|User-Agent=VLC/3.0.18\n"
+                + "#EXTINF:-1,Info 25\n"
+                + "#EXTGRP:Noticias\n"
+                + "rtsp://proveedor.ejemplo:554/live/info25\n";
+    }
+
+    private static String sampleOtherSchemes() {
+        return "#EXTM3U\n"
+                + "#EXTINF:-1 tvg-name=\"P2P Uno\" group-title=\"P2P\",Canal P2P Uno\n"
+                + "acestream://aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n"
+                + "#EXTINF:-1 tvg-name=\"Plugin\" group-title=\"P2P\",Canal por plugin\n"
+                + "plugin://plugin.video.ejemplo/?url=http%3A%2F%2Fservidor.ejemplo%2Fvivo\n";
+    }
+
+    /** El caso que antes dejaba la app pensando para siempre. */
+    private static String sampleLooseAttributes() {
+        return "#EXTM3U\n"
+                + "#EXTINF: -1  tvg-name = 'Radio Uno'  group-title = 'Música' ,Musica Uno\n"
+                + "http://audio.ejemplo/1.mp3\n"
+                + "#EXTINF:-1 tvg-name='Radio Dos' group-title='Música',Musica Dos\n"
+                + "\u00A0http://audio.ejemplo/2.mp3\n";
+    }
+
+    private static String sampleUnquoted() {
+        return "#EXTM3U\n"
+                + "#EXTINF:-1 tvg-name=Cine Uno group-title=Cine,Cine Uno\n"
+                + "http://cine.ejemplo/1.ts\n"
+                + "#EXTINF:-1 tvg-logo=http://cine.ejemplo/logo.png group-title=Cine,Películas de acción\n"
+                + "http://cine.ejemplo/2.ts\n";
+    }
+
+    private static String sampleRelative() {
+        return "#EXTM3U\n"
+                + "#EXTINF:-1 tvg-name=\"Relativo Uno\" group-title=\"Relativos\",Relativo Uno\n"
+                + "video/1.ts\n"
+                + "#EXTINF:-1 tvg-name=\"Relativo Dos\" group-title=\"Relativos\",Relativo Dos\n"
+                + "/absoluto/2.ts\n";
+    }
+
+    private static String sampleHls() {
+        return "#EXTM3U\n"
+                + "#EXT-X-VERSION:3\n"
+                + "#EXT-X-STREAM-INF:BANDWIDTH=1280000,RESOLUTION=640x360\n"
+                + "video/360/index.m3u8\n"
+                + "#EXT-X-STREAM-INF:BANDWIDTH=2560000,RESOLUTION=1280x720\n"
+                + "video/720/index.m3u8\n";
+    }
+
+    private static String sampleHtml() {
+        return "<!DOCTYPE html>\n<html><head><title>Proveedor</title></head>\n"
+                + "<body><h1>Bienvenido</h1><p>Accede con tu usuario y contraseña.</p></body></html>\n";
+    }
+}
+<<<<<< FIN: src/main/java/com/pocketbuilder/app_wslenytv1792177359057/SelfTest.java >>>>>>
+
+FIN DE LA PARTE 33 (SelfTest.java queda completo con la 32 + 33).

@@ -1,0 +1,142 @@
+================================================================================
+LENY TV 1.55 — PARTE 2: MANIFIESTO Y RECURSOS XML (TEXTO COMPLETO)
+================================================================================
+Contenido íntegro de AndroidManifest.xml y de todos los recursos XML del
+proyecto. Todos los recursos del proyecto están en res/values: no hay layouts
+XML ni drawables XML (toda la interfaz se construye por código en Java).
+
+<<<<<< ARCHIVO: src/main/AndroidManifest.xml >>>>>>
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    package="com.pocketbuilder.app_wslenytv1792177359057"
+    android:versionCode="55"
+    android:versionName="1.55">
+
+    <!-- Compatibilidad declarada dentro del APK: Android 10 (API 29) o superior.
+         Así el instalador no depende de valores inyectados por la herramienta de
+         empaquetado. -->
+    <uses-sdk
+        android:minSdkVersion="29"
+        android:targetSdkVersion="34" />
+
+    <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+    <!-- Para buscar las listas M3U que el usuario ya tiene descargadas en el teléfono. -->
+    <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE"
+        android:maxSdkVersion="32" />
+    <uses-permission android:name="android.permission.MANAGE_EXTERNAL_STORAGE" />
+
+    <!-- Permite que el diagnóstico (pantalla DIAGNÓSTICO) vea qué componentes
+         abren LENY TV, para detectar un icono viejo que apunte a una entrada que
+         ya no existe. No da acceso a los datos de otras apps. -->
+    <queries>
+        <intent>
+            <action android:name="android.intent.action.MAIN" />
+            <category android:name="android.intent.category.LAUNCHER" />
+        </intent>
+    </queries>
+
+    <application
+        android:allowBackup="false"
+        android:hardwareAccelerated="true"
+        android:label="LENY TV"
+        android:supportsRtl="true"
+        android:usesCleartextTraffic="true"
+        android:theme="@style/LenyTheme">
+
+        <!-- ÚNICA ENTRADA DEL MENÚ (el icono que Android muestra y abre).
+             REVISIÓN 48: los nombres vuelven a la forma con punto delante
+             (".CoverActivity"). En la revisión 47 se escribieron completos y la app
+             dejó de abrir desde el icono ni desde Ajustes → Abrir, porque el
+             empaquetado resolvía el componente con el nombre del paquete delante:
+             «.CoverActivity» se une al paquete del manifiesto y siempre encuentra la
+             clase, mientras que un nombre completo escrito a mano depende de que el
+             empaquetado no cambie nada. AAPT2 no comprueba que la clase exista, así
+             que el error solo aparecía al abrir la app.
+             PORTADA DE BIENVENIDA: su diseño está entero en CoverActivity.java. -->
+        <activity
+            android:name=".CoverActivity"
+            android:enabled="true"
+            android:exported="true"
+            android:launchMode="singleTop"
+            android:screenOrientation="sensorLandscape"
+            android:configChanges="orientation|screenSize|smallestScreenSize|screenLayout|keyboardHidden|uiMode|density">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+
+        <!-- PANTALLA DE CANALES. Se abre desde la portada (botón ENTRAR).
+             Sigue accesible desde fuera (exported) SIN filtro MAIN/LAUNCHER: así un
+             icono guardado por una revisión antigua, que apuntaba a esta pantalla,
+             puede abrirla igualmente, y no aparece un segundo icono en el menú.
+             En la revisión 48 se quitó la redirección a la portada que se añadió en
+             la 47: esta pantalla ahora se muestra tal cual, sin saltos ni bucles. -->
+        <activity
+            android:name=".MainActivity"
+            android:enabled="true"
+            android:exported="true"
+            android:launchMode="singleTop"
+            android:windowSoftInputMode="adjustResize"
+            android:screenOrientation="sensorLandscape"
+            android:configChanges="orientation|screenSize|smallestScreenSize|screenLayout|keyboardHidden|uiMode|density" />
+
+        <activity
+            android:name=".PlayerActivity"
+            android:exported="false"
+            android:theme="@style/LenyTheme.Player"
+            android:supportsPictureInPicture="true"
+            android:screenOrientation="sensorLandscape"
+            android:configChanges="orientation|screenSize|smallestScreenSize|screenLayout|keyboardHidden|uiMode|density" />
+    </application>
+
+</manifest>
+<<<<<< FIN: src/main/AndroidManifest.xml >>>>>>
+
+<<<<<< ARCHIVO: src/main/res/values/strings.xml >>>>>>
+<resources>
+    <string name="app_name">LENY TV</string>
+    <string name="display_text">Reproductor IPTV</string>
+</resources>
+<<<<<< FIN: src/main/res/values/strings.xml >>>>>>
+
+<<<<<< ARCHIVO: src/main/res/values/styles.xml >>>>>>
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+
+    <!-- Tema de LENY TV: sin barra de título, fondo oscuro y permitiendo que la
+         ventana use la zona del recorte de la cámara (notch) para que la app
+         ocupe toda la pantalla desde el primer instante. -->
+    <style name="LenyTheme" parent="@android:style/Theme.Material.NoActionBar">
+        <item name="android:windowNoTitle">true</item>
+        <item name="android:windowBackground">#FF08080F</item>
+        <item name="android:colorBackground">#FF08080F</item>
+        <item name="android:windowLayoutInDisplayCutoutMode">shortEdges</item>
+        <item name="android:statusBarColor">#FF08080F</item>
+        <item name="android:navigationBarColor">#FF08080F</item>
+    </style>
+
+    <!-- Tema del reproductor: además arranca en pantalla completa. -->
+    <style name="LenyTheme.Player" parent="LenyTheme">
+        <item name="android:windowFullscreen">true</item>
+    </style>
+
+</resources>
+<<<<<< FIN: src/main/res/values/styles.xml >>>>>>
+
+--------------------------------------------------------------------------------
+QUÉ FALTA EN RES/ Y POR QUÉ
+--------------------------------------------------------------------------------
+* NO hay res/layout/*.xml: cada pantalla (portada, canales, reproductor) se
+  construye en Java dentro de su Activity.
+* NO hay res/drawable/*.xml: los iconos se dibujan por código (Icons.java,
+  PlayerIcons.java con Canvas) y las imágenes de fondo son PNG en assets.
+* NO hay mipmap-*: el icono de lanzador lo genera PocketBuilder a partir de
+  assets/generated/app_icon.png. Fuera de PocketBuilder hay que crear los mipmap
+  (o usar un adaptive icon) con esa imagen como referencia.
+* strings.xml solo tiene dos textos fijos: casi todos los textos de la interfaz
+  están escritos directamente en el código Java.
+================================================================================
+FIN DE LA PARTE 2
+================================================================================

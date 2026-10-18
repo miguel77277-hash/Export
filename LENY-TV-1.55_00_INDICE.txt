@@ -1,0 +1,168 @@
+================================================================================
+LENY TV 1.55 — EXPORTACIÓN DEL CÓDIGO FUENTE (ÍNDICE GENERAL)
+================================================================================
+Generado desde el proyecto "Leny TV" de PocketBuilder.
+Paquete original : com.pocketbuilder.app_wslenytv1792177359057
+Versión          : 1.55 (versionCode 55)
+minSdk 29 (Android 10, compatible con Android 11+) · targetSdk 34 · compileSdk 34
+Orientación      : sensorLandscape en todas las pantallas
+Lenguaje         : Java (no hay Kotlin)
+
+La app NO se ha modificado: este paquete es solo una copia de consulta.
+
+--------------------------------------------------------------------------------
+1. QUÉ CONTIENE ESTA EXPORTACIÓN
+--------------------------------------------------------------------------------
+  export/LENY-TV-1.55_00_INDICE.txt                <- este archivo
+  export/LENY-TV-1.55_01_COMPILACION.txt           <- build.gradle.kts, build.sh,
+                                                      workspace.json (texto completo)
+  export/LENY-TV-1.55_02_MANIFIESTO-Y-RECURSOS.txt <- AndroidManifest.xml,
+                                                      res/values/strings.xml,
+                                                      res/values/styles.xml (texto completo)
+  export/LENY-TV-1.55_03_IMAGENES.txt              <- inventario de las 4 imágenes,
+                                                      cómo sacarlas del teléfono y cómo
+                                                      regenerarlas
+  export/LENY-TV-1.55_04_JAVA-INVENTARIO.txt       <- los 39 archivos Java con ruta,
+                                                      tamaño exacto y función de cada uno
+  export/android-studio/settings.gradle.kts        <- proyecto externo listo
+  export/android-studio/build.gradle.kts           <- con Media3 ExoPlayer + DASH
+  export/android-studio/gradle.properties
+  export/android-studio/LEEME.txt                  <- pasos para Android Studio
+
+  IMPORTANTE: el código Java (894 KB en 38 archivos) NO está copiado dentro de
+  estos archivos de texto. Ver el apartado 5 y el archivo 04.
+
+--------------------------------------------------------------------------------
+2. ESTRUCTURA COMPLETA DE CARPETAS Y RUTAS ORIGINALES
+--------------------------------------------------------------------------------
+(entre corchetes: tamaño en bytes)
+
+Leny TV/
+├── build.gradle.kts                                    [698]
+├── build.sh                                            [851]
+├── workspace.json                                      [4957]
+├── src/
+│   └── main/
+│       ├── AndroidManifest.xml                         [4344]
+│       ├── res/
+│       │   └── values/
+│       │       ├── strings.xml                         [128]
+│       │       └── styles.xml                          [967]
+│       └── java/
+│           └── com/
+│               └── pocketbuilder/
+│                   ├── app_wslenytv1792177359057/
+│                   │   ├── MainActivity.java           [176423]
+│                   │   ├── PlayerActivity.java         [154456]
+│                   │   ├── DashPlayer.java             [83253]
+│                   │   ├── M3uParser.java              [61084]
+│                   │   ├── Mpd.java                    [48976]
+│                   │   ├── Net.java                    [42132]
+│                   │   ├── SelfTest.java               [34784]
+│                   │   ├── LocalProxy.java             [22227]
+│                   │   ├── InstallInfo.java            [16702]
+│                   │   ├── DashProbe.java              [16335]
+│                   │   ├── CoverActivity.java          [15007]
+│                   │   ├── StreamQuality.java          [14899]
+│                   │   ├── StreamCheck.java            [13249]
+│                   │   ├── LogoLoader.java             [13092]
+│                   │   ├── Headers.java                [12621]
+│                   │   ├── WelcomeCover.java           [11544]
+│                   │   ├── RogBar.java                 [11380]
+│                   │   ├── PlaylistStore.java          [11203]
+│                   │   ├── DrmInfo.java                [10208]
+│                   │   ├── PlayerIcons.java            [10033]
+│                   │   ├── Icons.java                  [9934]
+│                   │   ├── Diag.java                   [9719]
+│                   │   ├── Names.java                  [9706]
+│                   │   ├── Channel.java                [9644]
+│                   │   ├── EngineInfo.java             [9552]
+│                   │   ├── Mux.java                    [8657]
+│                   │   ├── MediaErrors.java            [7543]
+│                   │   ├── Immersion.java              [7390]
+│                   │   ├── AppPrefs.java               [6961]
+│                   │   ├── Ui.java                     [6760]
+│                   │   ├── LocalLists.java             [6584]
+│                   │   ├── FormatDetector.java         [4330]
+│                   │   ├── RogChannelAdapter.java      [3762]
+│                   │   ├── WrapRow.java                [3586]
+│                   │   ├── RogCategoryAdapter.java     [3697]
+│                   │   ├── RogStyle.java               [3337]
+│                   │   ├── DemoData.java               [2262]
+│                   │   └── Art.java                    [1093]
+│                   └── generatedapp/
+│                       └── AppView.java                [1864]  (plantilla sobrante,
+│                                                                 no se usa: se puede
+│                                                                 borrar fuera)
+├── assets/
+│   └── generated/
+│       ├── app_icon.png                                [742379]  1024x1024
+│       ├── portada.png                                 [1332626] 1376x768
+│       ├── cover.png                                   [1111118] 1376x768
+│       └── fondo_rog.png                               [1076452] 1376x768
+└── (chat_history.json y prompt_attachments/ son datos internos de PocketBuilder:
+     no forman parte de la app y no hacen falta para reconstruirla)
+
+Total del código Java: 894.125 bytes en 38 archivos (paquete de la app)
++ 1.864 bytes del archivo sobrante AppView.java = 895.989 bytes en 39 archivos.
+
+Rutas de los recursos dentro del APK: los PNG de assets/generated se leen en
+tiempo de ejecución con context.getAssets().open("generated/<archivo>").
+
+--------------------------------------------------------------------------------
+3. CÓMO RECONSTRUIR EL PROYECTO FUERA (Android Studio)
+--------------------------------------------------------------------------------
+1) Crea un proyecto Android vacío (o copia export/android-studio/*.kts y el
+   wrapper de Gradle a la raíz del proyecto exportado).
+2) Copia la carpeta src/ tal cual (respetando paquetes y rutas) y la carpeta
+   assets/generated/ a src/main/assets/generated/.
+3) Renombra el paquete a algo propio, por ejemplo com.lenytv.player:
+     - cambia las 39 carpetas/paquetes Java,
+     - cambia "package ..." de cada .java y sus import,
+     - cambia namespace/applicationId en build.gradle.kts,
+     - cambia package="..." en AndroidManifest.xml,
+     - cambia la referencia de CoverActivity/MainActivity/PlayerActivity en el
+       manifiesto (siguen siendo ".CoverActivity", ".MainActivity", etc.).
+   Si no renombras, la app funciona igual pero es "otra app distinta" para
+   Android en cuanto se publique.
+4) Completa el bloque dependencies con Media3 (ver archivo 01 y la carpeta
+   export/android-studio). Para DRM CENC real:
+     media3-exoplayer, media3-exoplayer-dash, media3-exoplayer-hls,
+     media3-ui, media3-datasource-okhttp
+   y en el código: DashMediaSource + DefaultDrmSessionManager.Builder con un
+   MediaDrmCallback (HttpMediaDrmCallback) apuntando a la URL de licencia
+   AUTORIZADA del proveedor. El motor DASH propio de esta versión no descifra
+   CENC: solo lee el manifiesto y explica el motivo.
+5) FIRMA: el APK actual está firmado con la clave de PocketBuilder. Si compilas
+   fuera con otra clave, Android NO instalará encima: hay que desinstalar la app
+   y se pierden listas y ajustes guardados. Hazlo cuando ya tengas la copia.
+6) PERMISO DELICADO: el manifiesto pide MANAGE_EXTERNAL_STORAGE (acceso total a
+   archivos) para localizar listas M3U ya descargadas. Google Play lo rechaza
+   salvo justificación muy concreta; si vas a publicar, hay que replantearlo
+   (SAF / selector de archivos).
+
+AVISO: build.sh es el script de compilación local de PocketBuilder (lleva rutas
+fijas del teléfono). Fuera del teléfono NO se usa: se compila con Gradle.
+
+--------------------------------------------------------------------------------
+4. MARCADORES USADOS EN LOS ARCHIVOS DE TEXTO
+--------------------------------------------------------------------------------
+Cada archivo se delimita así:
+
+    <<<<<< ARCHIVO: ruta/relativa/archivo.ext >>>>>>
+    (contenido completo, sin recortes)
+    <<<<<< FIN: ruta/relativa/archivo.ext >>>>>>
+
+Los bloques de contenido van literalmente entre esos dos marcadores, sin
+indentación añadida, para poder copiarlos tal cual.
+
+--------------------------------------------------------------------------------
+5. PENDIENTE: LOS 39 ARCHIVOS JAVA (894 KB)
+--------------------------------------------------------------------------------
+El código Java no está incluido en esta exportación porque su tamaño no cabe en
+el archivo de texto que puedo generar de una vez (ver el archivo 04, donde está
+el inventario exacto con rutas y tamaños, listo para ir rellenando por partes o
+para localizar cada archivo en el proyecto del teléfono).
+================================================================================
+FIN DEL ÍNDICE
+================================================================================

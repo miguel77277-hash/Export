@@ -1,0 +1,302 @@
+LENY TV 1.55 — PARTE 35 DE LA EXPORTACION DEL CODIGO FUENTE
+===========================================================
+Contenido LITERAL. Continuacion de PlayerActivity.java (se pega JUSTO DETRAS de
+la parte 34, sin repetir lineas).
+Ruta original: src/main/java/com/pocketbuilder/app_wslenytv1792177359057/PlayerActivity.java
+
+
+<<<<<< CONTINUACION: src/main/java/com/pocketbuilder/app_wslenytv1792177359057/PlayerActivity.java >>>>>>
+    /**
+     * Lee la lista de canales en segundo plano y la muestra cuando está lista.
+     * El lector solo extrae y valida las entradas: no reproduce nada.
+     */
+    private void loadChannelList(final long playlistId, final String url, final String name) {
+        final PlaylistStore.Playlist list = playlist;
+        background.execute(new Runnable() {
+            @Override
+            public void run() {
+                final ArrayList<Channel> parsed = new ArrayList<Channel>();
+                String problem = null;
+                try {
+                    String text = PlaylistStore.readCache(PlayerActivity.this, list);
+                    if (text == null || text.length() == 0) {
+                        problem = "la lista no tiene ninguna copia guardada en este teléfono";
+                    } else {
+                        M3uParser.Result result = M3uParser.parse(text,
+                                list != null && !list.isDemo() ? list.ref : null);
+                        // REVISIÓN 51: el panel de canales guarda la lista COMPLETA y
+                        // filtra por apartado dentro de sí mismo; así se puede cambiar
+                        // de apartado sin salir del reproductor.
+                        for (int i = 0; i < result.channels.size(); i++) {
+                            parsed.add(result.channels.get(i));
+                        }
+                        if (parsed.isEmpty()) problem = result.reason();
+                        Diag.add("Reproductor · lista leída en segundo plano: " + result.summary());
+                    }
+                } catch (OutOfMemoryError oom) {
+                    problem = "la lista es demasiado grande para la memoria de este teléfono";
+                } catch (Throwable t) {
+                    problem = Net.describe(t);
+                }
+                final String failure = problem;
+                ui.post(new Runnable() {
+                    @Override
+                    public void run() {
+                        applyChannelList(parsed, failure);
+                    }
+                });
+            }
+        });
+    }
+
+    /** Sustituye la lista lateral por la leída cuando llega desde el hilo de trabajo. */
+    private void applyChannelList(ArrayList<Channel> parsed, String problem) {
+        if (isFinishing() || isDestroyed()) return;
+        if (parsed.isEmpty()) {
+            Diag.add("Reproductor · no se pudo añadir la lista: "
+                    + (problem == null ? "sin entradas" : problem));
+            return;
+        }
+        String currentUrl = index >= 0 && index < channels.size() ? channels.get(index).url : "";
+        channels.clear();
+        channels.addAll(parsed);
+        int position = indexOfUrl(currentUrl);
+        if (position < 0) {
+            channels.add(0, new Channel(currentUrl.length() == 0 ? "Entrada" : M3uParser.guessName(currentUrl),
+                    currentUrl, "", categoryFilter.length() == 0 ? "Enlace directo" : categoryFilter));
+            position = 0;
+        }
+        index = position;
+        rebuildDrawerSections();
+        updateTopBar();
+        Diag.add("Reproductor · lista del canal: " + channels.size() + " entradas"
+                + (categoryFilter.length() == 0 ? "" : " de la categoría " + categoryFilter)
+                + " · canal actual " + (index + 1));
+        Channel now = currentChannel();
+        if (now.hasOwnHeaders()) {
+            Diag.add("Reproductor · el canal actual usa las cabeceras de su bloque: " + now.blockSummary());
+            EngineInfo.headers(now.blockSummary() + " · valores: " + Headers.describe(now.headers));
+        }
+        if (now.hasLicense()) {
+            Diag.add("Reproductor · " + now.licenseSummary());
+            EngineInfo.license(now.licenseSummary());
+        }
+    }
+
+    private int indexOfUrl(String url) {
+        for (int i = 0; i < channels.size(); i++) {
+            if (channels.get(i).url.equals(url)) return i;
+        }
+        return -1;
+    }
+
+    private Channel currentChannel() {
+        if (index < 0 || index >= channels.size()) index = 0;
+        return channels.get(index);
+    }
+
+    // ------------------------------------------------------------------ vista
+
+    private void buildUi() {
+        root = new FrameLayout(this);
+        root.setBackgroundColor(0xFF000000);
+
+        videoBox = new FrameLayout(this);
+        surfaceView = new SurfaceView(this);
+        surfaceView.setLayoutParams(new FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT, Gravity.CENTER));
+        surfaceView.getHolder().addCallback(this);
+        videoBox.addView(surfaceView);
+        videoBox.setClickable(true);
+        videoBox.setOnTouchListener(new GestureListener());
+        root.addView(videoBox, new FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT));
+
+        buffering = new ProgressBar(this);
+        buffering.setIndeterminate(true);
+        buffering.setIndeterminateTintList(ColorStateList.valueOf(Ui.RED));
+        buffering.setVisibility(View.GONE);
+        FrameLayout.LayoutParams bufferParams = new FrameLayout.LayoutParams(
+                Ui.dpi(this, 54), Ui.dpi(this, 54));
+        bufferParams.gravity = Gravity.CENTER;
+        // El círculo de carga queda por encima de la banda de controles.
+        bufferParams.bottomMargin = Ui.dpi(this, 92);
+        root.addView(buffering, bufferParams);
+
+        root.addView(buildMessagePanel());
+        // REVISIÓN 50: barras del reproductor rehechas para copiar la captura.
+        root.addView(buildTopBarSkin());
+        root.addView(buildBottomBarSkin());
+        // REVISIÓN 52: el cartel con el nombre y los datos del canal ya NO se crea.
+        // Aparecía en mitad de la imagen cada vez que se cambiaba de canal (el
+        // recuadro con «ESPN 1 opcion 4 Hls · Otro (directo) · 1280×720 · 157 de
+        // 1157» de la captura) y el usuario ha pedido quitarlo.
+        root.addView(buildGesturePanel());
+
+        lockButton = skinButton(Icons.lock(this, Ui.TEXT, true), 44f, "Bloquear la pantalla");
+        lockButton.setAlpha(0.85f);
+        lockButton.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                toggleLock();
+            }
+        });
+        FrameLayout.LayoutParams lockParams = new FrameLayout.LayoutParams(
+                Ui.dpi(this, 44), Ui.dpi(this, 44));
+        // REVISIÓN 50: el candado va arriba a la derecha, sobre la barra superior,
+        // como en la captura del reproductor.
+        lockParams.gravity = Gravity.TOP | Gravity.END;
+        lockParams.rightMargin = Ui.dpi(this, 6);
+        lockParams.topMargin = Ui.dpi(this, 4);
+        root.addView(lockButton, lockParams);
+
+        // El botón de bloqueo flota SIEMPRE por encima de la banda de controles.
+        // Antes estaba a 14 dp del borde inferior y se dibujaba encima del
+        // deslizador de brillo: ahora su altura se calcula con el alto real de la
+        // banda, así no tapa ningún control ni en horizontal ni en vertical.
+        if (bottomBar != null) {
+            bottomBar.addOnLayoutChangeListener(new View.OnLayoutChangeListener() {
+                @Override
+                public void onLayoutChange(View v, int left, int top, int right, int bottom,
+                                           int oldLeft, int oldTop, int oldRight, int oldBottom) {
+                    int height = bottom - top;
+                    if (height <= 0 || lockButton == null) return;
+                    ViewGroup.LayoutParams raw = lockButton.getLayoutParams();
+                    if (!(raw instanceof FrameLayout.LayoutParams)) return;
+                    FrameLayout.LayoutParams params = (FrameLayout.LayoutParams) raw;
+                    int wanted = height + Ui.dpi(PlayerActivity.this, 8);
+                    if (params.bottomMargin != wanted) {
+                        params.bottomMargin = wanted;
+                        lockButton.setLayoutParams(params);
+                    }
+                }
+            });
+        }
+
+        drawerHolder = buildDrawer();
+        root.addView(drawerHolder, new FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT));
+
+        setContentView(root);
+        updateTopBar();
+        updatePlayButton();
+        setControlsVisible(true);
+    }
+
+    private View buildMessagePanel() {
+        messageHolder = new FrameLayout(this);
+        messageHolder.setVisibility(View.GONE);
+        messageHolder.setBackgroundColor(0x66000000);
+
+        LinearLayout panel = new LinearLayout(this);
+        panel.setOrientation(LinearLayout.VERTICAL);
+        panel.setBackground(Ui.roundedStroke(this, 0xF212121C, Ui.RED, 1.5f, 12f));
+        panel.setPadding(Ui.dpi(this, 18), Ui.dpi(this, 16), Ui.dpi(this, 18), Ui.dpi(this, 16));
+
+        messageTitle = Ui.text(this, "", 17f, Ui.TEXT, true);
+        panel.addView(messageTitle);
+
+        messageBody = Ui.text(this, "", 12f, Ui.TEXT_DIM, false);
+        messageBody.setLineSpacing(Ui.dp(this, 2f), 1f);
+        // El motivo del fallo puede ser largo (por ejemplo el informe del enlace):
+        // va dentro de un contenedor con desplazamiento para que se pueda leer todo.
+        messageScroll = new ScrollView(this);
+        messageScroll.addView(messageBody, new FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.WRAP_CONTENT));
+        LinearLayout.LayoutParams bodyParams = new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, Ui.dpi(this, 120));
+        bodyParams.topMargin = Ui.dpi(this, 8);
+        panel.addView(messageScroll, bodyParams);
+
+        // Los cinco botones del aviso se reparten en las líneas que hagan falta:
+        // antes iban en una sola fila y en una pantalla estrecha los últimos
+        // (Probar enlace, Volver) se salían del cuadro del aviso.
+        WrapRow buttons = new WrapRow(this, Ui.dpi(this, 8), Ui.dpi(this, 8));
+
+        messageRetry = Ui.primaryButton(this, "Reintentar");
+        messageRetry.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                hideMessage();
+                // Vuelve a probar desde el principio: DASH con el motor interno y,
+                // cuando el tipo no es DASH, con el modo compatible de cabeceras.
+                proxyAttempted = false;
+                useProxy = false;
+                startPlayback();
+            }
+        });
+        buttons.addView(messageRetry);
+
+        TextView pick = Ui.actionButton(this, "Elegir canal");
+        LinearLayout.LayoutParams p1 = new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT);
+        p1.leftMargin = Ui.dpi(this, 8);
+        pick.setLayoutParams(p1);
+        pick.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                openDrawer();
+            }
+        });
+        buttons.addView(pick);
+
+        TextView copy = Ui.actionButton(this, "Copiar motivo");
+        copy.setContentDescription("Copiar el motivo del fallo para poder enviarlo");
+        LinearLayout.LayoutParams copyParams = new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT);
+        copyParams.leftMargin = Ui.dpi(this, 8);
+        copy.setLayoutParams(copyParams);
+        copy.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                copyMessage();
+            }
+        });
+        buttons.addView(copy);
+
+        // Prueba el enlace y explica qué contesta el servidor de verdad: es lo que
+        // permite distinguir conexión, código HTTP, manifiesto inválido, códec o DRM.
+        TextView probe = Ui.actionButton(this, "Probar enlace");
+        probe.setContentDescription("Probar el enlace y mostrar qué responde el servidor");
+        LinearLayout.LayoutParams probeParams = new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT);
+        probeParams.leftMargin = Ui.dpi(this, 8);
+        probe.setLayoutParams(probeParams);
+        probe.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                probeCurrentLink();
+            }
+        });
+        buttons.addView(probe);
+
+        TextView back = Ui.actionButton(this, "Volver");
+        LinearLayout.LayoutParams p2 = new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT);
+        p2.leftMargin = Ui.dpi(this, 8);
+        back.setLayoutParams(p2);
+        back.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                finish();
+            }
+        });
+        buttons.addView(back);
+
+        LinearLayout.LayoutParams buttonsParams = new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT);
+        buttonsParams.topMargin = Ui.dpi(this, 14);
+        panel.addView(buttons, buttonsParams);
+
+        // El ancho se limita a la pantalla para que los cinco botones del aviso
+        // (Reintentar, Elegir canal, Copiar motivo, Probar enlace y Volver) quepan
+        // siempre, también en pantallas de móvil estrechas.
+        int panelWidth = Math.min(Ui.dpi(this, 620),
+                getResources().getDisplayMetrics().widthPixels - Ui.dpi(this, 40));
+        FrameLayout.LayoutParams panelParams = new FrameLayout.LayoutParams(
+                panelWidth, FrameLayout.LayoutParams.WRAP_CONTENT);
+        panelParams.gravity = Gravity.CENTER;
+        messageHolder.addView(panel, panelParams);
+        messageHolder.setClickable(true);
+        return messageHolder;
+    }

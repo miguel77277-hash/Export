@@ -1,0 +1,148 @@
+LENY TV 1.55 — ESTADO REAL DE LA EXPORTACION DEL CODIGO FUENTE
+==============================================================
+Este archivo NO es código: es el índice y el parte de trabajo de la copia que
+hay en la carpeta export/.
+
+Versión copiada: LENY TV 1.55 aprobada (versionCode 55).
+La aplicación NO se ha tocado: src/, assets/, build.gradle.kts y build.sh están
+exactamente igual que en la 1.55. No se ha añadido ni una línea de comentario al
+código de la app y no se ha cambiado nada de la configuración de compilación.
+Lo único que hay de nuevo son archivos de TEXTO dentro de export/, que no entran
+en el APK.
+
+
+1. QUÉ HAY EN export/ (39 de los 40 archivos Java ya están copiados)
+--------------------------------------------------------------------
+  LENY-TV-1.55_00_INDICE.txt                  árbol de carpetas, rutas y tamaños
+  LENY-TV-1.55_01_COMPILACION.txt             build.gradle.kts + build.sh + workspace.json (íntegros)
+  LENY-TV-1.55_02_MANIFIESTO-Y-RECURSOS.txt   AndroidManifest.xml + strings.xml + styles.xml (íntegros)
+  LENY-TV-1.55_03_IMAGENES.txt                las 4 imágenes: medidas reales y cómo recuperarlas
+  LENY-TV-1.55_04_JAVA-INVENTARIO.txt         los 39 archivos Java con ruta, tamaño y función
+
+  Java copiado LITERALMENTE (partes 05 a 26, tanda anterior):
+    05 DemoData, Art, WrapRow, RogStyle
+    06 FormatDetector, AppPrefs, Ui
+    07 Mux, EngineInfo, DrmInfo
+    08 MediaErrors, Immersion, Headers
+    09 Channel, Diag
+    10 StreamQuality, StreamCheck
+    11 Names, LocalLists, RogChannelAdapter, RogCategoryAdapter
+    12 Icons, PlayerIcons
+    13 PlaylistStore, RogBar
+    14 LogoLoader, AppView (plantilla sobrante de PocketBuilder)
+    15 LocalProxy
+    16-19 DashPlayer
+    20-21 Mpd
+    22-23 Net
+    24-26 M3uParser
+
+  Java copiado LITERALMENTE (partes 28 a 46, tanda de hoy):
+    28 InstallInfo
+    29 DashProbe
+    30 CoverActivity
+    31 WelcomeCover
+    32-33 SelfTest
+    34-46 PlayerActivity (13 partes, archivo completo)
+
+  LENY-TV-1.55_27_ESTADO-Y-COMO-SEGUIR.txt    este archivo
+  android-studio/                             esqueleto para montar el proyecto con Gradle
+
+
+2. QUÉ ESTÁ COMPLETO Y QUÉ FALTA (ahora falta UN solo archivo)
+-------------------------------------------------------------
+COMPLETO: los 38 archivos Java del paquete de la app + AppView.java (la plantilla
+sobrante de PocketBuilder), es decir 39 de 40. Entre ellos están los nueve que
+pediste por su nombre: DashPlayer, Mpd, Mux, DrmInfo, StreamQuality, M3uParser,
+Net, LocalProxy y Headers.
+
+FALTA: MainActivity.java (176.423 bytes).
+  Es el ÚNICO archivo que no se ha podido copiar, y el motivo es concreto y
+  comprobable: la herramienta de lectura de PocketBuilder rechaza los archivos de
+  más de 160.000 bytes. Al pedirlo, el programa responde literalmente:
+      «File is too large for one model read (176423 bytes; maximum 160000)».
+  No hay ninguna otra herramienta en este entorno capaz de leer ese archivo por
+  trozos (no hay lectura por rangos, ni consola, ni copia de archivos). Por eso no
+  aparece transcrito: NO se ha inventado, ni resumido, ni sustituido por código
+  nuevo. PlayerActivity, que era aún más delicado, sí ha entrado completo porque
+  mide 154.456 bytes y queda por debajo de ese límite.
+
+CÓMO CONSEGUIR ESE ÚLTIMO ARCHIVO (es rápido, hazlo fuera de PocketBuilder):
+  A) La opción EXPORTAR / COMPARTIR PROYECTO de la propia app PocketBuilder
+     entrega la carpeta del proyecto entera, con nombres y carpetas originales,
+     incluido MainActivity.java, sin pasar por estos textos.
+  B) Con ordenador y depuración USB:
+       adb pull /sdcard/Android/data/com.pocketbuilder/files/projects/<proyecto>/src/main/java/com/pocketbuilder/app_wslenytv1792177359057/MainActivity.java
+     (la carpeta de proyectos puede estar también en el almacenamiento interno
+     de PocketBuilder; busca la que contiene build.gradle.kts y workspace.json).
+  C) Si no tienes ordenador, dime en otra tanda: «copia MainActivity por trozos»
+     y lo intentaré dividiendo el archivo con las herramientas que sí existen
+     (por ejemplo copiando su contenido válido mediante búsquedas por método).
+     Eso NO da una copia literal fiable, así que solo lo haré si me lo pides y
+     siempre te avisaré de que no es una transcripción exacta.
+
+Por qué se copia así: dentro de PocketBuilder solo existen herramientas para LEER
+un archivo y ESCRIBIR texto. No hay orden de copia, ni de comprimir en ZIP, ni
+consola. Copiar 894 KB obliga a leer cada archivo y volver a escribirlo letra a
+letra, por tandas. Esas tandas son las partes numeradas de esta carpeta.
+
+
+3. CÓMO SE RECONSTRUYE CADA ARCHIVO (importante)
+-----------------------------------------------
+Cada archivo va entre dos marcas:
+    <<<<<< ARCHIVO: ruta/completa >>>>>>
+    ...contenido literal, tal cual está en el proyecto...
+    <<<<<< FIN: ruta/completa >>>>>>
+Los archivos partidos en varias partes (DashPlayer 16-19, Mpd 20-21, Net 22-23,
+M3uParser 24-26, SelfTest 32-33, PlayerActivity 34-46) llevan solo la marca
+ARCHIVO en la primera parte y solo la marca FIN en la última. Las partes se pegan
+en orden, tal cual, sin añadir ni quitar líneas: el resultado es el archivo
+original byte a byte (los encabezados explicativos de cada parte, que están fuera
+de las marcas, no se copian).
+
+
+4. ZIP: NO SE PUEDE CREAR DENTRO DE POCKETBUILDER
+-------------------------------------------------
+No hay ninguna herramienta de compresión (ni zip, ni tar, ni consola) en este
+entorno: las herramientas disponibles solo escriben archivos de TEXTO. Un ZIP es
+binario, así que aquí no se puede fabricar. Métodos reales para tener el ZIP:
+  · En el teléfono, con un gestor de archivos (por ejemplo ZArchiver): abrir la
+    carpeta del proyecto de PocketBuilder, seleccionar y comprimir.
+  · En un ordenador: descargar la carpeta del proyecto (Exportar/Compartir
+    proyecto o adb pull) y comprimirla con clic derecho → Comprimir.
+  · Con estas partes de texto: copiarlas a un ordenador, reconstruir los archivos
+    pegando las partes en orden y comprimir la carpeta resultante.
+
+
+5. RECURSOS Y ARCHIVOS NECESARIOS (todo presente, revisado)
+----------------------------------------------------------
+  AndroidManifest.xml            íntegro (parte 02)
+  res/values/strings.xml         íntegro (parte 02)
+  res/values/styles.xml          íntegro (parte 02)
+  build.gradle.kts               íntegro (parte 01) — el bloque dependencies está vacío
+  build.sh                       íntegro (parte 01) — tiene rutas del teléfono: no usar fuera
+  workspace.json                 íntegro (parte 01)
+  No hay layouts XML ni drawables XML: toda la interfaz se construye en Java.
+  Imágenes (4, en assets/generated): app_icon.png, portada.png, cover.png,
+  fondo_rog.png. No se pueden meter en un texto: sus bytes, sus medidas reales y
+  la descripción para recuperarlas o regenerarlas están en la parte 03.
+
+
+6. PARA COMPILAR FUERA (Android Studio, con AndroidX Media3)
+-----------------------------------------------------------
+  - Usa android-studio/settings.gradle.kts y android-studio/app-build.gradle.kts.txt
+    como punto de partida (repositorios google() y mavenCentral(), media3 ya declarado).
+  - Rellena el bloque dependencies de la app con media3-exoplayer,
+    media3-exoplayer-dash, media3-exoplayer-hls y los módulos de interfaz que decidas.
+  - NO uses build.sh: tiene rutas fijas del teléfono y solo sirve para la
+    compilación local de PocketBuilder.
+  - Mantén compileSdk 34, minSdk 29 y targetSdk 34.
+  - Firma: el APK actual está firmado con la clave de PocketBuilder. Si compilas
+    fuera con otra clave, Android no instalará encima: hay que desinstalar antes
+    la app actual (y se pierden listas y ajustes guardados).
+  - Paquete: conviene cambiar com.pocketbuilder.app_wslenytv1792177359057 por uno
+    propio antes de publicar; si lo cambias, es otra app distinta para Android.
+  - Permiso: el manifiesto pide MANAGE_EXTERNAL_STORAGE (acceso total a archivos)
+    para buscar listas M3U descargadas. Google Play lo rechaza salvo justificación
+    muy concreta.
+  - DRM: el motor solo IDENTIFICA la protección (Widevine/ClearKey) y avisa de que
+    no descifra. No hay ninguna URL de licencia ni clave inventada en el código.

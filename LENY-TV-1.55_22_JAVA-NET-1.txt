@@ -1,0 +1,465 @@
+LENY TV 1.55 — CODIGO FUENTE REAL — PARTE 22 (DESCARGAS Y CABECERAS, 1 de 2)
+==========================================================================
+Texto LITERAL de src/main/java/com/pocketbuilder/app_wslenytv1792177359057/Net.java (42.132 bytes).
+Por su tamaño se reparte en DOS partes (22 y 23). Para reconstruirlo hay que
+pegar la parte 23 justo detrás de la 22, sin añadir ni quitar nada.
+
+
+<<<<<< ARCHIVO: src/main/java/com/pocketbuilder/app_wslenytv1792177359057/Net.java (PARTE 22 de 2: principio del archivo) >>>>>>
+package com.pocketbuilder.app_wslenytv1792177359057;
+
+import android.content.Context;
+import android.net.ConnectivityManager;
+import android.net.NetworkInfo;
+
+import java.io.ByteArrayOutputStream;
+import java.io.IOException;
+import java.io.InputStream;
+import java.net.HttpURLConnection;
+import java.net.URL;
+import java.util.ArrayList;
+import java.util.Locale;
+import java.util.Map;
+import java.util.TreeMap;
+import java.util.zip.GZIPInputStream;
+import java.util.zip.InflaterInputStream;
+
+/**
+ * Descargas de listas M3U/M3U8 con cabeceras HTTP (User-Agent y Referer).
+ *
+ * Muchos proveedores rechazan la petición si no se envían las cabeceras
+ * correctas, y otros devuelven una redirección a otro servidor. Por eso:
+ *
+ *  - Las redirecciones se siguen a mano, incluso si saltan de http a https
+ *    (cosa que la librería estándar de Android no hace sola).
+ *  - Si el primer intento falla, se prueba con las cabeceras de un reproductor
+ *    conocido (VLC), con y sin Referer, y después con las de un navegador.
+ *  - Cada intento queda anotado con su código de respuesta, su tipo de
+ *    contenido y su tamaño, para poder explicar exactamente qué pasó.
+ *  - Una respuesta se acepta si parece una lista M3U: por sus etiquetas
+ *    (#EXTM3U / #EXTINF / #EXT-X-) o porque contiene direcciones.
+ */
+final class Net {
+
+    static final String DEFAULT_UA = "LenyTV/1.0 (Android)";
+    /** Cabecera de reproductor que aceptan casi todos los proveedores IPTV. */
+    static final String PLAYER_UA = "VLC/3.0.18 LibVLC/3.0.18";
+    private static final String BROWSER_UA = "Mozilla/5.0 (Linux; Android 12) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36";
+
+    private static final int CONNECT_TIMEOUT = 15000;
+    private static final int READ_TIMEOUT = 25000;
+    /** Espera corta para las comprobaciones que ocurren ANTES de reproducir. */
+    private static final int QUICK_TIMEOUT = 8000;
+    private static final int MAX_BYTES = 32 * 1024 * 1024;
+    private static final int MAX_HOPS = 6;
+
+    /** Resultado de intentar descargar una lista. */
+    static final class LoadResult {
+        String text;
+        String error;
+        String hint;
+        String note;
+        /** Cabeceras con las que por fin se pudo descargar (para reutilizarlas al reproducir). */
+        String usedUserAgent;
+        String usedReferer;
+        /** Dirección real después de las redirecciones del servidor. */
+        String finalUrl;
+        /** Fragmento corto de lo recibido cuando no era una lista (ayuda a explicar el fallo). */
+        String snippet;
+        /** Paso a paso de lo que ocurrió con cada intento (código, tipo, tamaño...). */
+        final ArrayList<String> attempts = new ArrayList<String>();
+        /** Código HTTP del último intento realizado (-1 si ni se llegó a conectar). */
+        int lastCode = -1;
+
+        boolean ok() {
+            return text != null && text.length() > 0;
+        }
+    }
+
+    private Net() {
+    }
+
+    static boolean online(Context context) {
+        try {
+            ConnectivityManager cm = (ConnectivityManager) context.getSystemService(Context.CONNECTIVITY_SERVICE);
+            if (cm == null) return true;
+            NetworkInfo info = cm.getActiveNetworkInfo();
+            return info != null && info.isConnected();
+        } catch (Exception e) {
+            return true;
+        }
+    }
+
+    /**
+     * Descarga una lista probando varios juegos de cabeceras.
+     *
+     * Una respuesta solo se acepta si de verdad parece una lista M3U: hay
+     * proveedores que, con cabeceras equivocadas, contestan con un texto de error
+     * o con una página web en lugar de con la lista.
+     */
+    static LoadResult loadList(String url, Map<String, String> configured) {
+        LoadResult result = new LoadResult();
+        if (url == null || url.trim().length() == 0) {
+            result.error = "no hay ningún enlace que descargar";
+            result.attempts.add("No hay ningún enlace que descargar.");
+            return result;
+        }
+        url = url.trim();
+        ArrayList<Map<String, String>> attempts = new ArrayList<Map<String, String>>();
+        addAttempt(attempts, configured);
+        addAttempt(attempts, playerHeaders(url));
+        addAttempt(attempts, plainHeaders(url, PLAYER_UA));
+        addAttempt(attempts, playerHeadersWithFullReferer(url));
+        addAttempt(attempts, plainHeaders(url, BROWSER_UA));
+        addAttempt(attempts, browserHeaders(url));
+
+        String firstError = null;
+        String htmlProblem = null;
+        String wrongBody = null;
+        String wrongSnippet = null;
+
+        for (int i = 0; i < attempts.size(); i++) {
+            Map<String, String> headers = attempts.get(i);
+            ArrayList<String> trace = new ArrayList<String>();
+            trace.add("Intento " + (i + 1) + " de " + attempts.size() + " con " + describeHeaders(headers));
+            try {
+                Response response = fetch(url, headers, "GET", trace);
+                result.lastCode = response.code;
+                trace.add("Respuesta: código " + response.code + " · tipo "
+                        + (response.contentType == null ? "(sin informar)" : response.contentType)
+                        + " · " + readable(response.body == null ? 0 : response.body.length));
+                result.attempts.addAll(trace);
+                String text = decode(response.body, response.contentType);
+                if (text == null || text.length() == 0) {
+                    if (firstError == null) firstError = "el servidor respondió con un archivo vacío";
+                    continue;
+                }
+                if (looksLikeHtml(text)) {
+                    if (htmlProblem == null) {
+                        htmlProblem = "el servidor devolvió una página web en lugar de la lista"
+                                + " (puede pedir iniciar sesión o haber cambiado el enlace)";
+                        if (wrongSnippet == null) wrongSnippet = snippetOf(text);
+                    }
+                    continue;
+                }
+                boolean byTag = hasPlaylistTags(text);
+                boolean byEntries = M3uParser.looksLikePlaylist(text);
+                if (!byTag && !byEntries) {
+                    if (wrongBody == null) {
+                        wrongBody = "el servidor respondió algo que no es una lista M3U ("
+                                + readable(response.body == null ? 0 : response.body.length) + ")";
+                        wrongSnippet = snippetOf(text);
+                    }
+                    continue;
+                }
+                result.text = text;
+                result.finalUrl = response.url;
+                result.usedUserAgent = headers == null ? null : headers.get("User-Agent");
+                result.usedReferer = headers == null ? null : headers.get("Referer");
+                result.attempts.add("Aceptada como lista (" + (byTag ? "tiene etiquetas M3U" : "tiene direcciones")
+                        + ", " + text.length() + " caracteres).");
+                if (i > 0) {
+                    result.note = "Se cargó con cabeceras de reproductor alternativas"
+                            + (result.usedReferer == null || result.usedReferer.length() == 0
+                            ? " (sin Referer)." : ".");
+                }
+                return result;
+            } catch (IOException e) {
+                result.attempts.addAll(trace);
+                result.attempts.add("  fallo: " + describe(e));
+                if (firstError == null) firstError = describe(e);
+            } catch (Throwable t) {
+                result.attempts.addAll(trace);
+                result.attempts.add("  fallo: " + describe(t));
+                if (firstError == null) firstError = describe(t);
+            }
+        }
+
+        if (wrongBody != null || htmlProblem != null) {
+            String problem = htmlProblem != null ? htmlProblem : wrongBody;
+            result.error = firstError == null ? problem : problem + " · " + firstError;
+            result.snippet = wrongSnippet;
+            result.hint = "Comprueba el enlace o escríbelo otra vez desde el proveedor.";
+        } else {
+            result.error = firstError == null ? "no se pudo descargar la lista" : firstError;
+            if (result.error.indexOf("403") >= 0 || result.error.indexOf("401") >= 0) {
+                result.hint = "Tu proveedor pide cabeceras: escribe el User-Agent y el Referer en AJUSTES > LISTA.";
+            }
+        }
+        return result;
+    }
+
+    /**
+     * Prueba un enlace y devuelve un informe legible: código HTTP, tipo de
+     * contenido, tamaño, redirecciones, primeros caracteres y qué entradas
+     * reconoce el lector. Es la herramienta que dice si el fallo es de la app,
+     * del servidor, de la URL o del formato.
+     */
+    static String probeReport(String url, Map<String, String> headers) {
+        StringBuilder sb = new StringBuilder();
+        if (url == null || url.trim().length() == 0) {
+            return "Escribe primero un enlace para probar.";
+        }
+        String clean = url.trim();
+        sb.append("ENLACE: ").append(clean).append('\n');
+        Map<String, String> used = (headers == null || headers.isEmpty()) ? playerHeaders(clean) : headers;
+        sb.append("CABECERAS: ").append(describeHeaders(used)).append('\n');
+        ArrayList<String> trace = new ArrayList<String>();
+        try {
+            Response response = fetch(clean, used, "GET", trace);
+            for (int i = 0; i < trace.size(); i++) sb.append(trace.get(i)).append('\n');
+            sb.append("CÓDIGO HTTP: ").append(response.code).append('\n');
+            sb.append("TIPO DE CONTENIDO: ")
+                    .append(response.contentType == null ? "(el servidor no lo informa)" : response.contentType)
+                    .append('\n');
+            sb.append("TAMAÑO RECIBIDO: ").append(readable(response.body == null ? 0 : response.body.length)).append('\n');
+            String text = decode(response.body, response.contentType);
+            sb.append("TEXTO LEÍDO: ").append(text.length()).append(" caracteres\n");
+            if (looksLikeHtml(text)) sb.append("AVISO: parece una página web, no una lista de texto.\n");
+            M3uParser.Result parsed = M3uParser.parse(text, clean);
+            sb.append("LECTURA DE LA LISTA: ").append(parsed.summary()).append('\n');
+            for (int i = 0; i < parsed.notes.size(); i++) {
+                sb.append("AVISO DEL LECTOR: ").append(parsed.notes.get(i)).append('\n');
+            }
+            if (parsed.channels.isEmpty()) {
+                sb.append("MOTIVO: ").append(parsed.reason()).append('\n');
+            }
+            if (parsed.channels.size() > 0) {
+                Channel first = parsed.channels.get(0);
+                sb.append("PRIMER CANAL: ").append(first.name).append(" → ").append(first.url).append('\n');
+                sb.append("Prueba a abrirlo tocándolo en la cuadrícula.\n");
+            } else {
+                sb.append("PRIMERAS LÍNEAS RECIBIDAS: ").append(snippetOf(text)).append('\n');
+                if (parsed.mediaPlaylist) {
+                    sb.append("Ese enlace es un VÍDEO HLS (.m3u8), no una lista de canales: "
+                            + "usa el botón REPRODUCIR de la pantalla principal.\n");
+                }
+            }
+        } catch (Throwable t) {
+            for (int i = 0; i < trace.size(); i++) sb.append(trace.get(i)).append('\n');
+            sb.append("FALLO AL DESCARGAR: ").append(describe(t)).append('\n');
+            sb.append("Si el código era 401/403, el proveedor necesita tu User-Agent o tu Referer"
+                    + " (AJUSTES > LISTA). Si fue 404, la dirección ya no existe. Si fue un fallo de"
+                    + " conexión, revisa la escritura del enlace y tu internet.\n");
+        }
+        return sb.toString();
+    }
+
+    /** Fragmento corto y sin saltos de línea de lo recibido, para poder explicar el fallo. */
+    static String snippetOf(String text) {
+        if (text == null) return "";
+        StringBuilder sb = new StringBuilder();
+        for (int i = 0; i < text.length() && sb.length() < 90; i++) {
+            char c = text.charAt(i);
+            sb.append(c < ' ' ? ' ' : c);
+        }
+        return sb.toString().trim();
+    }
+
+    /** Tamaño en unidades legibles. */
+    static String readable(int bytes) {
+        if (bytes < 1024) return bytes + " bytes";
+        if (bytes < 1024 * 1024) return Math.round(bytes / 1024f) + " KB";
+        return Math.round(bytes / (1024f * 1024f)) + " MB";
+    }
+
+    /**
+     * Nombre de las cabeceras que se van a enviar, sin datos sensibles completos.
+     * Se apoya en {@link Headers}, que oculta cookies, tokens y claves.
+     */
+    static String describeHeaders(Map<String, String> headers) {
+        return Headers.describe(headers);
+    }
+
+    /**
+     * Resultado de mirar qué tipo de contenido sirve un enlace, sin descargarlo.
+     * Sirve para reconocer un manifiesto DASH aunque la dirección no termine en
+     * ".mpd": manda lo que informa el servidor (y, si no lo informa, el propio
+     * contenido del archivo).
+     */
+    static final class Sniff {
+        /** Tipo según {@link FormatDetector} (DASH, HLS, TS, MP4, WEBM u OTHER). */
+        String type = FormatDetector.OTHER;
+        String contentType = "";
+        /** De dónde salió la decisión, para el diagnóstico. */
+        String how = "";
+        /** Código HTTP y detalles de la comprobación. */
+        String detail = "";
+        boolean reached;
+    }
+
+    /**
+     * Averigua el tipo real del enlace usando el tipo de contenido del servidor y,
+     * si no basta, los primeros bytes del archivo (un manifiesto DASH empieza por
+     * "&lt;MPD"). Nunca lanza excepción: si no se puede determinar, devuelve
+     * "Otro" y la app sigue con el camino seguro de siempre.
+     */
+    static Sniff sniffType(String url, Map<String, String> headers) {
+        Sniff sniff = new Sniff();
+        if (url == null || url.trim().length() == 0) {
+            sniff.detail = "no hay enlace que comprobar";
+            return sniff;
+        }
+        String clean = url.trim();
+        String low = clean.toLowerCase(Locale.US);
+        if (!low.startsWith("http://") && !low.startsWith("https://")) {
+            sniff.detail = "el enlace no es HTTP ni HTTPS";
+            return sniff;
+        }
+        Map<String, String> used = (headers == null || headers.isEmpty())
+                ? playerHeaders(clean) : headers;
+        String contentType = "";
+        int code = -1;
+        ArrayList<String> trace = new ArrayList<String>();
+        try {
+            Response head = quickHead(clean, used, trace);
+            code = head.code;
+            contentType = head.contentType == null ? "" : head.contentType;
+        } catch (Throwable t) {
+            trace.add("no se pudo preguntar con HEAD: " + describe(t));
+        }
+        String byMime = FormatDetector.fromContentType(contentType);
+        sniff.contentType = contentType;
+        if (!FormatDetector.OTHER.equals(byMime)) {
+            sniff.type = byMime;
+            sniff.reached = true;
+            sniff.how = "el servidor informa el tipo de contenido";
+            sniff.detail = "código HTTP " + code + " · tipo " + contentType;
+            return sniff;
+        }
+        // El servidor no dice nada útil (o informa un tipo genérico): se miran los
+        // primeros bytes del archivo para reconocer un manifiesto DASH o una lista
+        // HLS. Se piden solo unos pocos bytes y se cierra la conexión.
+        String headText = "";
+        try {
+            headText = readHeadText(clean, used, 1500);
+            sniff.reached = true;
+        } catch (Throwable t) {
+            trace.add("no se pudieron leer los primeros bytes: " + describe(t));
+        }
+        String upper = headText == null ? "" : headText.toUpperCase(Locale.US);
+        if (upper.indexOf("<MPD") >= 0 || upper.indexOf(":MPD") >= 0) {
+            sniff.type = FormatDetector.DASH;
+            sniff.how = "el archivo empieza por un manifiesto <MPD>";
+        } else if (upper.indexOf("#EXTM3U") >= 0) {
+            sniff.type = FormatDetector.HLS;
+            sniff.how = "el archivo empieza por una lista #EXTM3U";
+        } else if (upper.indexOf("FTYP") >= 0 && upper.indexOf("MP4") >= 0) {
+            sniff.type = FormatDetector.MP4;
+            sniff.how = "el archivo empieza con la marca MP4";
+        }
+        if (!FormatDetector.OTHER.equals(sniff.type)) {
+            sniff.detail = "código HTTP " + code + " · tipo " + (contentType.length() == 0
+                    ? "(el servidor no lo informa)" : contentType);
+            return sniff;
+        }
+        StringBuilder detail = new StringBuilder();
+        detail.append("código HTTP ").append(code);
+        detail.append(" · tipo ").append(contentType.length() == 0 ? "(sin informar)" : contentType);
+        detail.append(" · los primeros bytes no son un manifiesto DASH");
+        if (trace.size() > 0) detail.append(" · ").append(trace.get(trace.size() - 1));
+        sniff.detail = detail.toString();
+        return sniff;
+    }
+
+    /**
+     * Pregunta rápida por el tipo del enlace antes de reproducir. Usa un tiempo de
+     * espera corto (8 s): si el servidor calla, la app no puede quedarse 25 s
+     * esperando antes de intentar la reproducción.
+     */
+    private static Response quickHead(String url, Map<String, String> headers,
+                                     ArrayList<String> trace) throws IOException {
+        String current = url;
+        for (int hop = 0; hop < MAX_HOPS; hop++) {
+            HttpURLConnection conn = null;
+            try {
+                conn = open(current, headers, "HEAD");
+                conn.setConnectTimeout(QUICK_TIMEOUT);
+                conn.setReadTimeout(QUICK_TIMEOUT);
+                int code = conn.getResponseCode();
+                if (code == 301 || code == 302 || code == 303 || code == 307 || code == 308) {
+                    String location = conn.getHeaderField("Location");
+                    if (location == null || location.length() == 0) {
+                        throw new IOException("el servidor redirigió el enlace pero no indicó a dónde"
+                                + " (código " + code + ")");
+                    }
+                    current = resolve(current, location);
+                    if (trace != null) trace.add("redirección " + code);
+                    continue;
+                }
+                Response response = new Response();
+                response.code = code;
+                response.url = current;
+                response.contentType = conn.getContentType();
+                response.body = new byte[0];
+                return response;
+            } finally {
+                if (conn != null) conn.disconnect();
+            }
+        }
+        throw new IOException("el enlace da demasiadas vueltas (demasiadas redirecciones)");
+    }
+
+    /**
+     * Primeros bytes de un enlace (para reconocer el formato por su contenido),
+     * siguiendo las redirecciones y cerrando la conexión en cuanto se leen.
+     */
+    private static String readHeadText(String url, Map<String, String> headers, int maxBytes)
+            throws IOException {
+        String current = url;
+        for (int hop = 0; hop < MAX_HOPS; hop++) {
+            HttpURLConnection conn = null;
+            try {
+                conn = open(current, headers, "GET");
+                conn.setConnectTimeout(QUICK_TIMEOUT);
+                conn.setReadTimeout(QUICK_TIMEOUT);
+                conn.setRequestProperty("Range", "bytes=0-" + Math.max(0, maxBytes - 1));
+                int code = conn.getResponseCode();
+                if (code == 301 || code == 302 || code == 303 || code == 307 || code == 308) {
+                    String location = conn.getHeaderField("Location");
+                    if (location == null || location.length() == 0) {
+                        throw new IOException("el servidor redirigió el enlace pero no indicó a dónde"
+                                + " (código " + code + ")");
+                    }
+                    current = resolve(current, location);
+                    continue;
+                }
+                if (code < 200 || code >= 400) {
+                    throw new IOException("el servidor respondió con el código " + code);
+                }
+                InputStream in = conn.getInputStream();
+                try {
+                    ByteArrayOutputStream out = new ByteArrayOutputStream();
+                    byte[] buffer = new byte[1024];
+                    int read;
+                    int total = 0;
+                    while ((read = in.read(buffer)) > 0) {
+                        out.write(buffer, 0, read);
+                        total += read;
+                        if (total >= maxBytes) break;
+                    }
+                    return decode(out.toByteArray(), conn.getContentType());
+                } finally {
+                    try {
+                        in.close();
+                    } catch (Exception ignored) {
+                    }
+                }
+            } finally {
+                if (conn != null) conn.disconnect();
+            }
+        }
+        throw new IOException("el enlace da demasiadas vueltas (demasiadas redirecciones)");
+    }
+
+    /** true si el texto contiene etiquetas propias del formato de listas. */
+    static boolean hasPlaylistTags(String text) {
+        if (text == null || text.length() == 0) return false;
+        int limit = Math.min(text.length(), 8000);
+        String head = text.substring(0, limit).toUpperCase(Locale.US);
+        return head.indexOf("#EXTM3U") >= 0 || head.indexOf("#EXTINF") >= 0 || head.indexOf("#EXT-X-") >= 0;
+    }
+<<<<<< FIN PARCIAL DE LA PARTE 22: el archivo continua en la PARTE 23 >>>>>>
+
+
+FIN DE LA PARTE 22. El resto de Net.java esta en la parte 23.

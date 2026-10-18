@@ -1,0 +1,652 @@
+LENY TV 1.55 — CODIGO FUENTE REAL — PARTE 19 (MOTOR DASH, 4 de 4)
+================================================================
+Final LITERAL de src/main/java/com/pocketbuilder/app_wslenytv1792177359057/DashPlayer.java
+El archivo completo son las partes 16 + 17 + 18 + 19 pegadas en ese orden.
+Esta parte sigue donde acaba la 18 (startSingleFile) y termina el archivo.
+
+
+<<<<<< ARCHIVO: src/main/java/com/pocketbuilder/app_wslenytv1792177359057/DashPlayer.java (PARTE 19 de 4: final del archivo) >>>>>>
+
+    // ------------------------------------------------- entrega al reproductor
+
+    private void step() {
+        if (released || paused) return;
+        if (singleFileMode) return;
+        if (active == null) {
+            Slot idle = slotA.player == null ? slotA : (slotB.player == null ? slotB : null);
+            if (idle == null) return;
+            Piece piece = ready.poll();
+            if (piece == null) {
+                if (!firstPieceStarted) listener.onBuffering(true);
+                return;
+            }
+            prepare(idle, piece);
+            return;
+        }
+        if (pending == null) {
+            Slot idle = active == slotA ? slotB : slotA;
+            if (idle.player != null) return;
+            Piece piece = ready.poll();
+            if (piece == null) return;
+            prepare(idle, piece);
+        }
+    }
+
+    private void prepare(final Slot slot, final Piece piece) {
+        releaseSlot(slot);
+        final MediaPlayer player = new MediaPlayer();
+        player.setAudioAttributes(new AudioAttributes.Builder()
+                .setUsage(AudioAttributes.USAGE_MEDIA)
+                .setContentType(AudioAttributes.CONTENT_TYPE_MOVIE)
+                .build());
+        if (surface != null) {
+            try {
+                player.setSurface(surface);
+            } catch (Throwable ignored) {
+            }
+        }
+        slot.player = player;
+        slot.file = piece.file;
+        slot.startMs = piece.startMs;
+        slot.piece = piece;
+        slot.prepared = false;
+        slot.playing = false;
+        slot.chained = false;
+        player.setOnPreparedListener(new MediaPlayer.OnPreparedListener() {
+            @Override
+            public void onPrepared(MediaPlayer mp) {
+                if (released) return;
+                slot.prepared = true;
+                if (slot.startMs >= 0) activeStartMs = slot.startMs;
+                if (active == null) {
+                    startPiece(slot);
+                } else {
+                    pending = slot;
+                    try {
+                        active.player.setNextMediaPlayer(mp);
+                        slot.chained = true;
+                    } catch (Throwable ignored) {
+                        slot.chained = false;
+                    }
+                }
+            }
+        });
+        player.setOnCompletionListener(new MediaPlayer.OnCompletionListener() {
+            @Override
+            public void onCompletion(MediaPlayer mp) {
+                onPieceFinished(slot);
+            }
+        });
+        player.setOnErrorListener(new MediaPlayer.OnErrorListener() {
+            @Override
+            public boolean onError(MediaPlayer mp, int what, int extra) {
+                onPieceError(slot, what, extra);
+                return true;
+            }
+        });
+        player.setOnVideoSizeChangedListener(new MediaPlayer.OnVideoSizeChangedListener() {
+            @Override
+            public void onVideoSizeChanged(MediaPlayer mp, int width, int height) {
+                videoWidth = width;
+                videoHeight = height;
+                listener.onVideoSize(width, height);
+            }
+        });
+        try {
+            player.setDataSource(slot.file.getAbsolutePath());
+            player.prepareAsync();
+        } catch (Throwable t) {
+            Diag.add("DASH · no se pudo preparar el trozo: " + Net.describe(t));
+            releaseSlot(slot);
+            if (!firstPieceStarted) {
+                fail("No se pudo preparar el trozo del canal",
+                        "El reproductor de Android rechazó el archivo descargado (" + Net.describe(t) + ").\n\n"
+                                + "Contenido del trozo: " + lastCheckNote + ".\n"
+                                + "Calidad en uso: "
+                                + (selectedVideo == null ? "(todavía sin datos)" : selectedVideo.label()) + ".");
+            }
+        }
+    }
+
+    private void startPiece(Slot slot) {
+        try {
+            slot.player.start();
+            slot.playing = true;
+            active = slot;
+            firstPieceStarted = true;
+            listener.onBuffering(false);
+            if (videoWidth <= 0) {
+                int width = slot.player.getVideoWidth();
+                int height = slot.player.getVideoHeight();
+                if (width > 0 && height > 0) {
+                    videoWidth = width;
+                    videoHeight = height;
+                    listener.onVideoSize(width, height);
+                }
+            }
+        } catch (Throwable t) {
+            Diag.add("DASH · no se pudo arrancar el trozo: " + Net.describe(t));
+            releaseSlot(slot);
+            active = null;
+        }
+    }
+
+    private void onPieceFinished(Slot slot) {
+        if (slot == active) {
+            Slot next = pending;
+            pending = null;
+            if (next != null && next.prepared) {
+                if (!next.chained) {
+                    try {
+                        next.player.start();
+                    } catch (Throwable ignored) {
+                    }
+                }
+                next.playing = true;
+                next.chained = false;
+                if (next.startMs >= 0) activeStartMs = next.startMs;
+                releaseSlot(slot);
+                active = next;
+                listener.onBuffering(false);
+            } else {
+                releaseSlot(slot);
+                active = null;
+                if (!released) listener.onBuffering(true);
+            }
+        } else if (slot == pending) {
+            // El trozo preparado de más no llegó a usarse.
+            pending = null;
+            releaseSlot(slot);
+        }
+    }
+
+    private void onPieceError(Slot slot, int what, int extra) {
+        String detail = MediaErrors.explain(what, extra);
+        Piece tried = slot.piece;
+        Diag.add("DASH · fallo al reproducir el trozo" + (tried == null ? "" : " " + tried.number)
+                + " · " + MediaErrors.kind(what, extra) + " (what=" + what + ", extra=" + extra + ") · "
+                + detail + (tried == null || tried.check.length() == 0 ? "" : " · contenido: " + tried.check));
+
+        // Si el archivo que falla era el que llevaba el audio unido al vídeo, se
+        // sigue con el vídeo solo (sin sonido) en lugar de parar con un código sin
+        // motivo: el canal continúa y el diagnóstico dice qué pasó.
+        if (tried != null && tried.muxed && muxEnabled
+                && tried.rawVideo != null && tried.rawVideo.exists()) {
+            File raw = tried.rawVideo;
+            muxEnabled = false;
+            Diag.add("DASH · el archivo unido (audio + vídeo) no se pudo reproducir: se continúa con el"
+                    + " vídeo sin sonido en lugar de detener el canal");
+            slot.piece = null;
+            releaseSlot(slot);
+            active = null;
+            prepare(slot, new Piece(raw, null, tried.startMs, tried.number, tried.time, false, tried.check));
+            return;
+        }
+
+        boolean wasActive = slot == active;
+        if (slot == pending) pending = null;
+        releaseSlot(slot);
+        if (wasActive) {
+            active = null;
+            consecutiveErrors++;
+            String estado = "Calidad en uso: "
+                    + (selectedVideo == null ? "(todavía sin datos)" : selectedVideo.label()) + ".\n"
+                    + "Último trozo comprobado: "
+                    + (lastCheckNote.length() == 0 ? "(ninguno)" : lastCheckNote) + ".\n"
+                    + "Resultados del servidor: " + httpHistory() + ".";
+            if (!firstPieceStarted) {
+                fail("El canal DASH no da imagen", "La imagen no llegó a empezar.\n\n" + detail
+                        + "\n\n" + estado);
+            } else if (consecutiveErrors >= 4) {
+                fail("El canal DASH se ha detenido",
+                        "Se han perdido varios trozos seguidos.\n\n" + detail + "\n\n" + estado);
+            } else {
+                listener.onBuffering(true);
+            }
+        }
+    }
+
+    private void releaseSlot(Slot slot) {
+        if (slot == null) return;
+        MediaPlayer player = slot.player;
+        slot.player = null;
+        slot.prepared = false;
+        slot.playing = false;
+        slot.chained = false;
+        if (player != null) {
+            try {
+                player.setOnPreparedListener(null);
+                player.setOnCompletionListener(null);
+                player.setOnErrorListener(null);
+                player.setOnVideoSizeChangedListener(null);
+                player.setOnInfoListener(null);
+            } catch (Throwable ignored) {
+            }
+            try {
+                player.setSurface(null);
+            } catch (Throwable ignored) {
+            }
+            try {
+                player.reset();
+            } catch (Throwable ignored) {
+            }
+            try {
+                player.release();
+            } catch (Throwable ignored) {
+            }
+        }
+        File file = slot.file;
+        Piece piece = slot.piece;
+        slot.file = null;
+        slot.piece = null;
+        slot.startMs = -1;
+        deleteQuietly(file);
+        if (piece != null) {
+            // El trozo de vídeo sin sonido y el archivo unido se borran aquí, salvo
+            // el que se acaba de eliminar por ser el que se estaba reproduciendo.
+            if (piece.rawVideo != null && piece.rawVideo != file) deleteQuietly(piece.rawVideo);
+            if (piece.file != null && piece.file != file) deleteQuietly(piece.file);
+        }
+    }
+
+    private void clearSlots() {
+        releaseSlot(slotA);
+        releaseSlot(slotB);
+        active = null;
+        pending = null;
+    }
+
+    private void applySurface(Slot slot) {
+        if (slot == null || slot.player == null || surface == null) return;
+        try {
+            slot.player.setSurface(surface);
+        } catch (Throwable ignored) {
+        }
+    }
+
+    // -------------------------------------------------------------- descargas
+
+    private byte[] fetchBytes(String url, Map<String, String> httpHeaders, long limit) throws IOException {
+        InputStream in = null;
+        try {
+            in = openStream(url, httpHeaders);
+            java.io.ByteArrayOutputStream out = new java.io.ByteArrayOutputStream();
+            byte[] buffer = new byte[16384];
+            int read;
+            while ((read = in.read(buffer)) > 0) {
+                if (released) throw new Cancelled();
+                out.write(buffer, 0, read);
+                if (out.size() > limit) throw new IOException("el archivo recibido es demasiado grande");
+            }
+            return out.toByteArray();
+        } finally {
+            closeQuietly(in);
+        }
+    }
+
+    private void download(String url, byte[] init, File destination) throws IOException {
+        FileOutputStream out = null;
+        InputStream in = null;
+        try {
+            if (destination.exists()) destination.delete();
+            out = new FileOutputStream(destination, false);
+            if (init != null && init.length > 0) out.write(init);
+            in = openStream(url, headers);
+            byte[] buffer = new byte[32768];
+            int read;
+            long total = 0;
+            while ((read = in.read(buffer)) > 0) {
+                if (released) throw new Cancelled();
+                out.write(buffer, 0, read);
+                total += read;
+                if (total > MAX_SEGMENT_BYTES) throw new IOException("el trozo es demasiado grande");
+            }
+        } catch (IOException e) {
+            closeQuietly(out);
+            out = null;
+            if (destination.exists()) destination.delete();
+            throw e;
+        } finally {
+            closeQuietly(out);
+            closeQuietly(in);
+        }
+        if (destination.length() == 0) {
+            destination.delete();
+            throw new IOException("el trozo llegó vacío");
+        }
+    }
+
+    /** Abre un enlace siguiendo redirecciones y, si falla, probando el puente local. */
+    private InputStream openStream(String url, Map<String, String> httpHeaders) throws IOException {
+        IOException first = null;
+        try {
+            return openDirect(url, httpHeaders);
+        } catch (MissingSegment missing) {
+            // Un trozo que ya no existe no se arregla cambiando de cabeceras: se
+            // informa de inmediato para que el motor se recol oque en el directo.
+            throw missing;
+        } catch (MediaErrors.Http http) {
+            if (http.code >= 400 && http.code < 500 && http.code != 401 && http.code != 403) throw http;
+            first = http;
+        } catch (IOException e) {
+            first = e;
+        }
+        if (!LocalProxy.isHttp(url)) throw first;
+        try {
+            String bridged = LocalProxy.get().proxyUrl(url, httpHeaders);
+            if (bridged == null) throw first;
+            Diag.add("DASH · la petición directa falló (" + Net.describe(first)
+                    + "); se reintenta con el puente local y cabeceras");
+            return openDirect(bridged, httpHeaders);
+        } catch (IOException second) {
+            throw second;
+        }
+    }
+
+    private InputStream openDirect(String url, Map<String, String> httpHeaders) throws IOException {
+        String current = url;
+        for (int hop = 0; hop < 5; hop++) {
+            HttpURLConnection conn = open(current, httpHeaders);
+            int code = conn.getResponseCode();
+            if (code == 301 || code == 302 || code == 303 || code == 307 || code == 308) {
+                String location = conn.getHeaderField("Location");
+                conn.disconnect();
+                if (location == null || location.length() == 0) {
+                    throw new IOException("el servidor redirigió sin indicar a dónde (código " + code + ")");
+                }
+                current = Mpd.resolve(current, location);
+                continue;
+            }
+            if (code == 404 || code == 410) {
+                conn.disconnect();
+                lastHttpNote = recordHttp("código HTTP " + code + " · " + Diag.shortUrl(current));
+                throw new MissingSegment(MediaErrors.httpReason(code));
+            }
+            if (code < 200 || code >= 400) {
+                conn.disconnect();
+                lastHttpNote = recordHttp("código HTTP " + code + " · " + Diag.shortUrl(current));
+                throw new MediaErrors.Http(code, "el servidor respondió: " + MediaErrors.httpReason(code));
+            }
+            lastHttpNote = recordHttp("código HTTP " + code + " · "
+                    + MediaErrors.normalizeType(conn.getContentType()));
+            return conn.getInputStream();
+        }
+        throw new IOException("el enlace da demasiadas vueltas (demasiadas redirecciones)");
+    }
+
+    /**
+     * Abre la conexión aplicando TODAS las cabeceras configuradas (User-Agent,
+     * Referer y cualquier otra que exija el proveedor), tanto al manifiesto como a
+     * los datos iniciales y a cada trozo de vídeo o de audio. Si el servidor exige
+     * una cabecera concreta, es aquí donde se envía.
+     */
+    private HttpURLConnection open(String url, Map<String, String> httpHeaders) throws IOException {
+        HttpURLConnection conn = (HttpURLConnection) new URL(url).openConnection();
+        conn.setInstanceFollowRedirects(false);
+        conn.setConnectTimeout(15000);
+        conn.setReadTimeout(20000);
+        conn.setRequestProperty("Accept", "*/*");
+        conn.setRequestProperty("Accept-Encoding", "identity");
+        String userAgent = httpHeaders == null ? null : httpHeaders.get("User-Agent");
+        conn.setRequestProperty("User-Agent",
+                userAgent == null || userAgent.length() == 0 ? Net.PLAYER_UA : userAgent);
+        if (httpHeaders != null) {
+            for (Map.Entry<String, String> entry : httpHeaders.entrySet()) {
+                if (entry == null) continue;
+                String name = entry.getKey() == null ? "" : entry.getKey().trim();
+                String value = entry.getValue();
+                if (name.length() == 0 || value == null || value.length() == 0) continue;
+                if ("user-agent".equalsIgnoreCase(name)) continue;
+                try {
+                    conn.setRequestProperty(name, value);
+                } catch (Throwable ignored) {
+                    // Una cabecera con nombre inválido no debe impedir la descarga.
+                }
+            }
+        }
+        return conn;
+    }
+
+    // ---------------------------------------------------------------- ayudas
+
+    private int chooseQuality(ArrayList<Mpd.Rep> reps) {
+        // Se busca una calidad intermedia (en torno a 1,2 Mbps) que el teléfono
+        // pueda descargar sin cortes. Además se prefiere una calidad que ESTE
+        // teléfono pueda decodificar: así un canal que ofrece H.265 y H.264 arranca
+        // en H.264 en un aparato sin decodificador de H.265, en vez de dar error.
+        if (reps.isEmpty()) return 0;
+        Diag.add("DASH · calidades del canal (y si este teléfono puede decodificarlas): "
+                + qualitySummary(reps));
+        int best = 0;
+        int bestScore = Integer.MAX_VALUE;
+        for (int i = 0; i < reps.size(); i++) {
+            Mpd.Rep rep = reps.get(i);
+            if (rep.height > 1080) continue;
+            int bandwidth = rep.bandwidth > 0 ? rep.bandwidth : 1200000;
+            int score = Math.abs(bandwidth - 1200000);
+            if (!decodable(rep)) score += 1000000000;
+            if (score < bestScore) {
+                bestScore = score;
+                best = i;
+            }
+        }
+        if (!decodable(reps.get(best))) {
+            Diag.add("DASH · aviso: el teléfono no declara decodificador para ninguna de las calidades"
+                    + " del manifiesto; se probará la de " + reps.get(best).label());
+        }
+        return best;
+    }
+
+    /**
+     * Comprueba, con lo que dice el manifiesto (tipo y códec), si este teléfono
+     * tiene decodificador para esa calidad. La comprobación definitiva se hace
+     * después con el formato real del trozo descargado.
+     */
+    private boolean decodable(Mpd.Rep rep) {
+        if (rep == null) return false;
+        return StreamCheck.canDecode(StreamCheck.formatFor(rep.mimeType, rep.codecs));
+    }
+
+    /** Lista corta de las calidades con el resultado de la comprobación del decodificador. */
+    private String qualitySummary(ArrayList<Mpd.Rep> reps) {
+        StringBuilder sb = new StringBuilder();
+        for (int i = 0; i < reps.size() && i < 5; i++) {
+            Mpd.Rep rep = reps.get(i);
+            if (i > 0) sb.append(" · ");
+            sb.append(rep.label()).append(decodable(rep) ? " [se puede decodificar]" : " [sin decodificador]");
+        }
+        return sb.toString();
+    }
+
+    private Mpd.Rep chooseAudio(ArrayList<Mpd.Rep> reps) {
+        Mpd.Rep best = null;
+        int bestScore = Integer.MAX_VALUE;
+        // Si el manifiesto protege unas pistas de audio y otras no, se usa la libre:
+        // el canal se puede oír aunque el audio protegido no se descifre.
+        boolean anyClear = false;
+        for (int i = 0; i < reps.size(); i++) {
+            if (!reps.get(i).protectedContent) anyClear = true;
+        }
+        for (int i = 0; i < reps.size(); i++) {
+            Mpd.Rep rep = reps.get(i);
+            if (anyClear && rep.protectedContent) continue;
+            if (rep.singleFile && reps.size() > 1 && best != null) continue;
+            int bandwidth = rep.bandwidth > 0 ? rep.bandwidth : 128000;
+            int score = Math.abs(bandwidth - 128000);
+            if (score < bestScore) {
+                bestScore = score;
+                best = rep;
+            }
+        }
+        return best;
+    }
+
+    private void checkRestart() {
+        if (restartRequested) {
+            restartRequested = false;
+            clearPending();
+            Diag.add("DASH · se reinicia el motor con la nueva calidad");
+            throw new RestartSignal();
+        }
+    }
+
+    /**
+     * En los manifiestos de un solo archivo no hay trozos que preparar: se espera
+     * aquí a que la persona pida otra resolución para reiniciar con ella.
+     */
+    private void awaitQualityChange() {
+        while (!released) {
+            if (restartRequested) {
+                restartRequested = false;
+                Diag.add("DASH · se reinicia el archivo único con la resolución elegida");
+                clearPending();
+                throw new RestartSignal();
+            }
+            sleepQuiet(200);
+        }
+    }
+
+    private void clearPending() {
+        drainQueue();
+        ui.post(new Runnable() {
+            @Override
+            public void run() {
+                if (!released) {
+                    clearSlots();
+                    listener.onBuffering(true);
+                }
+            }
+        });
+        plan.clear();
+        lastNumber = -1;
+        firstPieceStarted = false;
+    }
+
+    /** Anota el resultado HTTP de la etapa que se está pidiendo (se guardan los últimos). */
+    private synchronized String recordHttp(String text) {
+        String entry = (stage == null || stage.length() == 0 ? "" : stage + ": ") + text;
+        httpNotes.add(entry);
+        while (httpNotes.size() > 6) httpNotes.remove(0);
+        return entry;
+    }
+
+    /** Resumen de los últimos resultados del servidor, por etapa. */
+    private synchronized String httpHistory() {
+        if (httpNotes.isEmpty()) return "(el servidor no llegó a responder)";
+        StringBuilder sb = new StringBuilder();
+        for (int i = 0; i < httpNotes.size(); i++) {
+            if (i > 0) sb.append(" · ");
+            sb.append(httpNotes.get(i));
+        }
+        return sb.toString();
+    }
+
+    private void drainQueue() {
+        Piece piece;
+        while ((piece = ready.poll()) != null) {
+            deleteQuietly(piece.file);
+            if (piece.rawVideo != null && piece.rawVideo != piece.file) deleteQuietly(piece.rawVideo);
+        }
+    }
+
+    private static void deleteQuietly(File file) {
+        if (file == null) return;
+        try {
+            file.delete();
+        } catch (Throwable ignored) {
+        }
+    }
+
+    private void releaseCache() {
+        try {
+            cacheDir = new File(context.getCacheDir(), "dash");
+            if (!cacheDir.exists() && !cacheDir.mkdirs()) {
+                Diag.add("DASH · no se pudo preparar la carpeta temporal");
+            }
+            File[] files = cacheDir.listFiles();
+            if (files != null) {
+                for (int i = 0; i < files.length; i++) files[i].delete();
+            }
+        } catch (Throwable t) {
+            Diag.add("DASH · aviso con la carpeta temporal: " + Net.describe(t));
+        }
+    }
+
+    private void fail(final String title, final String body) {
+        if (stopped) return;
+        stopped = true;
+        Diag.add("DASH · fallo definitivo: " + title + " · " + body);
+        Diag.save(context);
+        ui.post(new Runnable() {
+            @Override
+            public void run() {
+                releaseSlotsLater();
+                if (!released) listener.onError(title, body, true);
+            }
+        });
+    }
+
+    private void releaseSlotsLater() {
+        clearSlots();
+    }
+
+    private String explain(Throwable t) {
+        if (t instanceof FatalError) return t.getMessage();
+        if (t instanceof Cancelled) return "la reproducción se canceló";
+        String reason = t instanceof MediaErrors.Http
+                ? MediaErrors.describeNetwork(t, headers)
+                : Net.describe(t) + ".\n\nCabeceras enviadas: " + Net.describeHeaders(headers);
+        return "No se pudo seguir con el canal DASH.\nMotivo: " + reason
+                + "\n\nComprueba la conexión y, si el proveedor lo pide, escribe el User-Agent y el"
+                + " Referer correctos en AJUSTES DEL REPRODUCTOR.";
+    }
+
+    private void sleepQuiet(long millis) {
+        try {
+            Thread.sleep(millis);
+        } catch (InterruptedException interrupted) {
+            if (released) throw new Cancelled();
+        }
+    }
+
+    private static void closeQuietly(java.io.Closeable closeable) {
+        if (closeable == null) return;
+        try {
+            closeable.close();
+        } catch (Throwable ignored) {
+        }
+    }
+
+    /** Error que ya viene explicado al usuario. */
+    private static final class FatalError extends RuntimeException {
+        FatalError(String title, String body) {
+            super(body);
+            this.title = title;
+        }
+
+        final String title;
+    }
+
+    /** El trozo no existe en el servidor (puede ser el final de la emisión). */
+    private static final class MissingSegment extends IOException {
+        MissingSegment(String message) {
+            super(message);
+        }
+    }
+
+    /**
+     * El trozo llegó vacío, a medias o sin ninguna imagen utilizable. No se le
+     * entrega al reproductor: se descarta indicando el motivo real.
+     */
+    private static final class BadSegment extends IOException {
+        BadSegment(long number, String reason, String extra) {
+            super("trozo " + number + ": " + reason + (extra == null || extra.length() == 0
+                    ? "" : " (" + extra + ")"));
+        }
+    }
+}
+<<<<<< FIN: src/main/java/com/pocketbuilder/app_wslenytv1792177359057/DashPlayer.java >>>>>>
+
+
+FIN DE LA PARTE 19. DashPlayer.java queda completo con las partes 16 + 17 + 18 + 19.
+Continua en la parte 20.

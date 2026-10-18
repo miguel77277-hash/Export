@@ -1,0 +1,385 @@
+LENY TV 1.55 — PARTE 34 DE LA EXPORTACION DEL CODIGO FUENTE
+===========================================================
+Contenido LITERAL del archivo Java, copiado del proyecto real con read_file.
+Ruta original: src/main/java/com/pocketbuilder/app_wslenytv1792177359057/PlayerActivity.java
+Tamano original: 154.456 bytes.
+PlayerActivity va partido en varias partes consecutivas (34 y siguientes) porque
+es el archivo mas largo. Se pegan en orden, sin repetir lineas, y queda el
+archivo original completo. Esta parte NO lleva marca de FIN.
+
+
+<<<<<< ARCHIVO (PRINCIPIO): src/main/java/com/pocketbuilder/app_wslenytv1792177359057/PlayerActivity.java >>>>>>
+package com.pocketbuilder.app_wslenytv1792177359057;
+
+import android.app.Activity;
+import android.content.Intent;
+import android.content.res.ColorStateList;
+import android.graphics.drawable.Drawable;
+import android.media.AudioAttributes;
+import android.media.AudioManager;
+import android.media.MediaFormat;
+import android.media.MediaPlayer;
+import android.net.Uri;
+import android.os.Bundle;
+import android.os.Handler;
+import android.os.Looper;
+import android.text.InputType;
+import android.text.TextUtils;
+import android.view.Gravity;
+import android.view.MotionEvent;
+import android.view.Surface;
+import android.view.SurfaceHolder;
+import android.view.SurfaceView;
+import android.view.View;
+import android.view.ViewGroup;
+import android.view.WindowManager;
+import android.widget.AdapterView;
+import android.widget.BaseAdapter;
+import android.widget.EditText;
+import android.widget.FrameLayout;
+import android.widget.ImageView;
+import android.widget.LinearLayout;
+import android.widget.ListView;
+import android.widget.ProgressBar;
+import android.widget.ScrollView;
+import android.widget.SeekBar;
+import android.widget.Spinner;
+import android.widget.TextView;
+import android.widget.Toast;
+
+import java.util.ArrayList;
+import java.util.Locale;
+import java.util.Map;
+import java.util.TreeMap;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+
+/**
+ * Reproductor interno de LENY TV.
+ * Usa el reproductor multimedia propio de Android (MediaPlayer + SurfaceView),
+ * con controles propios, gestos de volumen y brillo, panel lateral de canales
+ * y bloqueo de pantalla.
+ */
+public final class PlayerActivity extends Activity implements SurfaceHolder.Callback {
+
+    static final String EXTRA_MODE = "mode";
+    static final String EXTRA_PLAYLIST_ID = "playlistId";
+    static final String EXTRA_URL = "url";
+    static final String EXTRA_NAME = "name";
+    static final String EXTRA_CATEGORY = "category";
+    static final String EXTRA_TYPE = "type";
+    /**
+     * Cabeceras propias del canal, escritas como "Nombre: valor" por línea. Se
+     * reciben ya leídas de la lista para que el PRIMER intento de reproducción
+     * use las del canal y no las generales.
+     */
+    static final String EXTRA_HEADERS = "headers";
+    static final String MODE_LIST = "list";
+    static final String MODE_SINGLE = "single";
+
+    /** Tiempo máximo que se espera a que el reproductor empiece a dar imagen. */
+    private static final long PREPARE_TIMEOUT_MS = 20000L;
+
+    private final Handler ui = new Handler(Looper.getMainLooper());
+    private final ArrayList<Channel> channels = new ArrayList<Channel>();
+    private final ArrayList<Integer> trackIndexes = new ArrayList<Integer>();
+    /** Hilo de trabajo para leer la lista de canales sin bloquear la pantalla. */
+    private final ExecutorService background = Executors.newSingleThreadExecutor();
+
+    private String mode = MODE_SINGLE;
+    private String categoryFilter = "";
+    private PlaylistStore.Playlist playlist;
+    private int index = 0;
+    private String manualType = "";
+
+    private MediaPlayer player;
+    /** Motor DASH interno: se crea solo cuando el canal es un manifiesto .mpd. */
+    private DashPlayer dash;
+    private Surface surface;
+    private boolean prepared = false;
+    private boolean playing = false;
+    private boolean finished = false;
+    private int videoWidth = 0;
+    private int videoHeight = 0;
+    private String currentType = FormatDetector.OTHER;
+    private boolean wasPlayingBeforePause = false;
+    /**
+     * Enlace de la calidad elegida cuando el canal NO usa el motor DASH (por
+     * ejemplo una variante de una lista maestra HLS). Vacío = el enlace del canal.
+     */
+    private String variantUrl = "";
+    private String variantLabel = "";
+    /** Resolución pedida antes de arrancar el motor DASH (-1 = automática). */
+    private int preferredDashQuality = -1;
+
+    private FrameLayout root;
+    private FrameLayout videoBox;
+    private SurfaceView surfaceView;
+    private FrameLayout messageHolder;
+    private FrameLayout drawerHolder;
+    private FrameLayout settingsHolder;
+    private FrameLayout choiceHolder;
+    private LinearLayout topBar;
+    private LinearLayout bottomBar;
+    private LinearLayout gesturePanel;
+    private TextView messageTitle;
+    private TextView messageBody;
+    private ScrollView messageScroll;
+    private TextView messageRetry;
+    /** Texto del último aviso del reproductor, para poder copiarlo. */
+    private String messageText = "";
+    private TextView topTitle;
+    private TextView topSubtitle;
+    private TextView timeView;
+    private TextView durationView;
+    private SeekBar progressBar;
+    private LinearLayout volumeRow;
+    private TextView gestureLabel;
+    private View playButton;
+    private View lockButton;
+    private View fullscreenButton;
+    private View drawerButton;
+    private View prevButton;
+    private View nextButton;
+    private View qualityButton;
+    private View aspectButton;
+    private View pipButton;
+    private TextView drawerCount;
+    private ProgressBar buffering;
+    private ProgressBar gestureBar;
+    private SeekBar volumeBar;
+    private ListView drawerList;
+    private DrawerAdapter drawerAdapter;
+    /** Fila de apartados que se eligen dentro del propio panel de canales. */
+    private LinearLayout drawerSectionRow;
+    /** Apartado elegido en el panel ("" = todos los canales de la lista). */
+    private String drawerSection = "";
+    /** Canales visibles en el panel según el apartado elegido. */
+    private final ArrayList<Integer> drawerPositions = new ArrayList<Integer>();
+
+    private boolean locked = false;
+    private boolean controlsVisible = true;
+    private boolean immersive = true;
+    private int audioMax = 15;
+    private long lastTapTime = 0;
+    /** Primero se intenta el reproductor directo; si falla, se usa el puente local con cabeceras. */
+    private boolean useProxy = false;
+    private boolean proxyAttempted = false;
+    /** De dónde salió el tipo de contenido: extensión, servidor o elección manual. */
+    private String typeOrigin = "";
+    /** Número del intento en curso: invalida los avisos de un intento anterior. */
+    private int attemptToken = 0;
+    /** Intento al que pertenece el vigilante de preparación que está en marcha. */
+    private int watchdogAttempt = -1;
+    private int insetLeft = -1;
+    private int insetTop = -1;
+    private int insetRight = -1;
+    private int insetBottom = -1;
+
+    private final Runnable hideControls = new Runnable() {
+        @Override
+        public void run() {
+            if (!locked && !isPanelOpen()) setControlsVisible(false);
+        }
+    };
+
+    private final Runnable hideGesture = new Runnable() {
+        @Override
+        public void run() {
+            if (gesturePanel != null) gesturePanel.setVisibility(View.GONE);
+        }
+    };
+
+    private final Runnable timeTick = new Runnable() {
+        @Override
+        public void run() {
+            updateTime();
+            if (player != null || dash != null) ui.postDelayed(this, 1000);
+        }
+    };
+
+    /**
+     * Vigilante de la preparación: si el servidor acepta la conexión pero no llega
+     * imagen ni error, antes el círculo amarillo giraba para siempre y el registro
+     * no decía nada. Ahora, pasados unos segundos, se avisa con el motivo exacto
+     * en pantalla y en el diagnóstico.
+     */
+    private final Runnable prepareWatchdog = new Runnable() {
+        @Override
+        public void run() {
+            onPrepareTimeout();
+        }
+    };
+
+    private interface ChoiceListener {
+        void onChoice(int position);
+    }
+
+    @Override
+    protected void onCreate(Bundle savedInstanceState) {
+        super.onCreate(savedInstanceState);
+        Intent intent = getIntent();
+        String url = intent.getStringExtra(EXTRA_URL);
+        String name = intent.getStringExtra(EXTRA_NAME);
+        String requestedMode = intent.getStringExtra(EXTRA_MODE);
+        manualType = intent.getStringExtra(EXTRA_TYPE) == null ? "" : intent.getStringExtra(EXTRA_TYPE);
+        if (requestedMode != null && requestedMode.length() > 0) mode = requestedMode;
+        categoryFilter = intent.getStringExtra(EXTRA_CATEGORY) == null ? "" : intent.getStringExtra(EXTRA_CATEGORY);
+        // El panel de canales arranca en el apartado desde el que se abrió el canal,
+        // y desde él se pueden elegir los demás apartados sin salir del reproductor.
+        drawerSection = categoryFilter;
+        long playlistId = intent.getLongExtra(EXTRA_PLAYLIST_ID, -1L);
+        // Cabeceras del bloque M3U del canal (User-Agent, Referer, Origin, Cookie...).
+        Map<String, String> ownHeaders = Headers.fromSpec(intent.getStringExtra(EXTRA_HEADERS));
+
+        if (url == null || url.length() == 0) {
+            toast("No se recibió ningún enlace");
+            finish();
+            return;
+        }
+
+        // El canal pedido se abre de inmediato. La lista completa se lee después,
+        // en segundo plano: una lista muy grande ya no puede congelar la pantalla
+        // (antes se leía aquí mismo, en el hilo principal).
+        channels.add(new Channel(name == null || name.length() == 0 ? M3uParser.guessName(url) : name,
+                url, "", categoryFilter.length() == 0 ? "Enlace directo" : categoryFilter,
+                ownHeaders, null, "", "", ""));
+        index = 0;
+
+        if (MODE_LIST.equals(mode)) {
+            playlist = PlaylistStore.byId(this, playlistId);
+            if (playlist == null) playlist = PlaylistStore.active(this);
+        }
+
+        buildUi();
+        applyImmersive(true);
+        // El vídeo y el fondo llenan toda la pantalla: los márgenes del recorte de
+        // la cámara se los queda solo la barra de controles para que nada quede
+        // tapado. Antes se encogía todo el contenido y el vídeo quedaba con franjas.
+        Immersion.listenInsets(root, new Immersion.InsetCallback() {
+            @Override
+            public void onInsets(int left, int top, int right, int bottom) {
+                applyControlInsets(left, top, right, bottom);
+            }
+        });
+
+        AudioManager am = (AudioManager) getSystemService(AUDIO_SERVICE);
+        if (am != null) audioMax = Math.max(1, am.getStreamMaxVolume(AudioManager.STREAM_MUSIC));
+        if (volumeBar != null) volumeBar.setProgress(volumePercent());
+        applyKeepScreenOn();
+
+        currentType = manualType.length() > 0 ? manualType : resolveType(currentChannel().url);
+        // Primero la preparación corta (bloque del canal y tipo del enlace) y
+        // después la lectura completa de la lista: así un catálogo enorme no
+        // retrasa el arranque del canal que el usuario acaba de tocar.
+        beginFirstPlayback(playlistId);
+        if (MODE_LIST.equals(mode)) loadChannelList(playlistId, url, name);
+    }
+
+    /**
+     * Prepara el PRIMER intento con los datos REALES del canal.
+     *
+     * Antes, al abrir un canal desde la cuadrícula, la reproducción empezaba con
+     * las cabeceras generales porque el bloque del canal se leía después; y un
+     * enlace DASH cuya dirección no termina en ".mpd" no se reconocía. Ahora,
+     * cuando hace falta, se busca el bloque del canal en la lista (en segundo
+     * plano, sin congelar la pantalla) y se pregunta al servidor qué tipo de
+     * contenido sirve. Solo después se arranca la reproducción.
+     */
+    private void beginFirstPlayback(final long playlistId) {
+        final Channel initial = currentChannel();
+        final boolean needBlock = MODE_LIST.equals(mode) && !initial.hasOwnHeaders();
+        final boolean needType = manualType.length() == 0
+                && FormatDetector.OTHER.equals(currentType)
+                && LocalProxy.isHttp(initial.url);
+        if (!needBlock && !needType) {
+            startPlayback();
+            return;
+        }
+        if (buffering != null) setBuffering(true);
+        try {
+            background.execute(new Runnable() {
+                @Override
+                public void run() {
+                    Channel found = null;
+                    if (needBlock) {
+                        try {
+                            PlaylistStore.Playlist list = playlist;
+                            String text = PlaylistStore.readCache(PlayerActivity.this, list);
+                            if (text != null && text.length() > 0) {
+                                found = M3uParser.lookupBlock(text, initial.url,
+                                        list != null && !list.isDemo() ? list.ref : null);
+                            }
+                        } catch (OutOfMemoryError oom) {
+                            Diag.add("Reproductor · la lista es demasiado grande para buscar el bloque del canal");
+                        } catch (Throwable t) {
+                            Diag.add("Reproductor · no se pudo buscar el bloque del canal: " + Net.describe(t));
+                        }
+                    }
+                    Net.Sniff sniff = null;
+                    if (needType) {
+                        try {
+                            sniff = Net.sniffType(initial.url,
+                                    channelHeaders(found != null ? found : initial));
+                        } catch (Throwable t) {
+                            Diag.add("Reproductor · no se pudo averiguar el tipo del enlace: " + Net.describe(t));
+                        }
+                    }
+                    final Channel enrichment = found;
+                    final Net.Sniff detected = sniff;
+                    ui.post(new Runnable() {
+                        @Override
+                        public void run() {
+                            if (isFinishing() || isDestroyed()) return;
+                            if (enrichment != null) applyChannelBlock(enrichment);
+                            if (detected != null) applySniff(detected);
+                            setBuffering(false);
+                            startPlayback();
+                        }
+                    });
+                }
+            });
+        } catch (Throwable t) {
+            Diag.add("Reproductor · no se pudo preparar el primer intento: " + Net.describe(t));
+            setBuffering(false);
+            startPlayback();
+        }
+    }
+
+    /**
+     * Sustituye el canal de arranque por su entrada completa de la lista, con las
+     * cabeceras y la licencia de su bloque, ANTES de reproducir.
+     */
+    private void applyChannelBlock(Channel found) {
+        if (found == null) return;
+        Channel current = currentChannel();
+        if (current == null || !current.url.equals(found.url)) return;
+        channels.set(index, found);
+        Diag.add("Reproductor · bloque del canal leído ANTES del primer intento: " + found.blockSummary());
+        EngineInfo.headers(found.blockSummary() + " · valores enviados: " + Headers.describe(found.headers));
+        if (found.hasLicense()) {
+            EngineInfo.license(found.licenseSummary());
+            Diag.add("Reproductor · " + found.licenseSummary());
+        }
+        updateTopBar();
+    }
+
+    /**
+     * Aplica lo que el servidor contestó sobre el tipo de contenido. Solo cambia
+     * el tipo cuando la dirección no lo decía (extensión desconocida) y el usuario
+     * no lo ha elegido a mano: así no se rompe ningún formato que ya funcionaba.
+     */
+    private void applySniff(Net.Sniff sniff) {
+        if (sniff == null) return;
+        EngineInfo.detect(sniff.detail + " → " + sniff.type
+                + (sniff.how.length() == 0 ? "" : " (" + sniff.how + ")"));
+        Diag.add("Reproductor · tipo del enlace: " + sniff.detail
+                + (sniff.how.length() == 0 ? "" : " · " + sniff.how));
+        if (manualType.length() == 0 && FormatDetector.OTHER.equals(currentType)
+                && !FormatDetector.OTHER.equals(sniff.type)) {
+            currentType = sniff.type;
+            typeOrigin = " (reconocido por lo que informa el servidor: " + sniff.how + ")";
+            Diag.add("Reproductor · la dirección no lo indicaba, pero el enlace es " + sniff.type
+                    + " · " + sniff.how + " · " + sniff.detail);
+        }
+    }

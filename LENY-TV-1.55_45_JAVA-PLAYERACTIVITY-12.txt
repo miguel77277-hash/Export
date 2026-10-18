@@ -1,0 +1,184 @@
+LENY TV 1.55 — PARTE 45 DE LA EXPORTACION DEL CODIGO FUENTE
+===========================================================
+Contenido LITERAL. Continuacion de PlayerActivity.java (se pega JUSTO DETRAS de
+la parte 44, sin repetir lineas).
+Ruta original: src/main/java/com/pocketbuilder/app_wslenytv1792177359057/PlayerActivity.java
+
+
+<<<<<< CONTINUACION: src/main/java/com/pocketbuilder/app_wslenytv1792177359057/PlayerActivity.java >>>>>>
+    private void showChoicePanel(String title, String[] options, int selected, final ChoiceListener listener) {
+        closeChoice();
+        final FrameLayout holder = new FrameLayout(this);
+        holder.setBackgroundColor(0xB3000000);
+        holder.setClickable(true);
+        holder.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                closeChoice();
+            }
+        });
+
+        LinearLayout panel = new LinearLayout(this);
+        panel.setOrientation(LinearLayout.VERTICAL);
+        panel.setBackground(Ui.roundedStroke(this, Ui.PANEL, Ui.RED_DEEP, 1.5f, 12f));
+        panel.setPadding(Ui.dpi(this, 14), Ui.dpi(this, 12), Ui.dpi(this, 14), Ui.dpi(this, 12));
+        panel.setClickable(true);
+
+        TextView heading = Ui.text(this, title, 14f, Ui.RED, true);
+        heading.setLetterSpacing(0.1f);
+        panel.addView(heading);
+
+        ScrollView scroll = new ScrollView(this);
+        LinearLayout list = new LinearLayout(this);
+        list.setOrientation(LinearLayout.VERTICAL);
+        for (int i = 0; i < options.length; i++) {
+            final int position = i;
+            boolean isSelected = i == selected;
+            TextView row = Ui.text(this, options[i], 13f, isSelected ? Ui.TEXT : Ui.TEXT_DIM, isSelected);
+            row.setPadding(Ui.dpi(this, 10), Ui.dpi(this, 12), Ui.dpi(this, 10), Ui.dpi(this, 12));
+            row.setBackground(Ui.buttonBg(this, isSelected ? Ui.CARD_SEL : Ui.PANEL,
+                    Ui.CARD_SEL, Ui.BLUE_DEEP, 6f));
+            row.setClickable(true);
+            row.setFocusable(true);
+            row.setOnClickListener(new View.OnClickListener() {
+                @Override
+                public void onClick(View v) {
+                    listener.onChoice(position);
+                }
+            });
+            LinearLayout.LayoutParams rowParams = new LinearLayout.LayoutParams(
+                    LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT);
+            rowParams.topMargin = Ui.dpi(this, 6);
+            list.addView(row, rowParams);
+        }
+        scroll.addView(list);
+        panel.addView(scroll, new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f));
+
+        TextView cancel = Ui.actionButton(this, "Cerrar");
+        cancel.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                closeChoice();
+            }
+        });
+        LinearLayout.LayoutParams cancelParams = new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT);
+        cancelParams.topMargin = Ui.dpi(this, 10);
+        cancelParams.gravity = Gravity.END;
+        panel.addView(cancel, cancelParams);
+
+        // El panel se ajusta al tamaño real de la pantalla: con medidas fijas, en
+        // un móvil en vertical (más estrecho que 440 dp) se salía por los lados.
+        int choiceWidth = Math.min(Ui.dpi(this, 440),
+                getResources().getDisplayMetrics().widthPixels - Ui.dpi(this, 32));
+        int choiceHeight = Math.min(Ui.dpi(this, 280),
+                getResources().getDisplayMetrics().heightPixels - Ui.dpi(this, 48));
+        FrameLayout.LayoutParams panelParams = new FrameLayout.LayoutParams(
+                Math.max(Ui.dpi(this, 220), choiceWidth), Math.max(Ui.dpi(this, 160), choiceHeight));
+        panelParams.gravity = Gravity.CENTER;
+        holder.addView(panel, panelParams);
+
+        choiceHolder = holder;
+        root.addView(choiceHolder, new FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT));
+        ui.removeCallbacks(hideControls);
+    }
+
+    private void closeChoice() {
+        if (choiceHolder != null) {
+            root.removeView(choiceHolder);
+            choiceHolder = null;
+            scheduleHide();
+        }
+    }
+
+    // ------------------------------------------------------------------ panel de canales
+
+    private void openDrawer() {
+        if (drawerHolder == null) return;
+        rebuildDrawerSections();
+        drawerHolder.setVisibility(View.VISIBLE);
+        setControlsVisible(true);
+        ui.removeCallbacks(hideControls);
+    }
+
+    /**
+     * Vuelve a dibujar la fila de apartados del panel con los apartados que trae la
+     * lista y marca el elegido. Si el elegido ya no existe se muestran todos los
+     * canales de la lista.
+     */
+    private void rebuildDrawerSections() {
+        if (drawerSectionRow == null) return;
+        drawerSectionRow.removeAllViews();
+        ArrayList<String> names = new ArrayList<String>();
+        for (int i = 0; i < channels.size(); i++) {
+            String category = categoryOf(channels.get(i));
+            if (category.length() > 0 && !names.contains(category)) names.add(category);
+        }
+        java.util.Collections.sort(names);
+        boolean exists = false;
+        for (int i = 0; i < names.size(); i++) {
+            if (names.get(i).equals(drawerSection)) exists = true;
+        }
+        if (!exists) drawerSection = "";
+
+        for (int i = 0; i < names.size(); i++) {
+            final String name = names.get(i);
+            boolean chosen = name.equals(drawerSection);
+            TextView chip = Ui.text(this, "", 10f, chosen ? 0xFFFFFFFF : Ui.TEXT_DIM, true);
+            // REVISIÓN 52: los apartados se muestran en MAYÚSCULAS, como pidió el
+            // usuario (ENTEL GOL, LIGA XBER, ESPN). El nombre guardado no cambia.
+            chip.setText(Names.forSection(chip.getPaint(), name));
+            chip.setSingleLine(true);
+            chip.setGravity(Gravity.CENTER);
+            chip.setPadding(Ui.dpi(this, 12), Ui.dpi(this, 8), Ui.dpi(this, 12), Ui.dpi(this, 8));
+            chip.setMinHeight(Ui.dpi(this, 40));
+            chip.setBackground(Ui.buttonBg(this, chosen ? 0xB3E13A2B : 0x50161620,
+                    chosen ? Ui.RED : 0x33FFFFFF, chosen ? Ui.RED : 0x33FFFFFF, 14f));
+            chip.setContentDescription("Apartado " + name);
+            chip.setClickable(true);
+            chip.setFocusable(true);
+            chip.setOnClickListener(new View.OnClickListener() {
+                @Override
+                public void onClick(View v) {
+                    drawerSection = name;
+                    rebuildDrawerSections();
+                }
+            });
+            LinearLayout.LayoutParams chipParams = new LinearLayout.LayoutParams(
+                    LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT);
+            if (i > 0) chipParams.leftMargin = Ui.dpi(this, 6);
+            drawerSectionRow.addView(chip, chipParams);
+        }
+        refreshDrawerFilter();
+    }
+
+    /** Recalcula los canales visibles en el panel y avisa a la lista. */
+    private void refreshDrawerFilter() {
+        drawerPositions.clear();
+        for (int i = 0; i < channels.size(); i++) {
+            String category = categoryOf(channels.get(i));
+            if (drawerSection.length() == 0 || drawerSection.equals(category)) {
+                drawerPositions.add(Integer.valueOf(i));
+            }
+        }
+        if (drawerCount != null) drawerCount.setText(drawerPositions.size() + " entradas");
+        if (drawerAdapter != null) drawerAdapter.notifyDataSetChanged();
+    }
+
+    private String categoryOf(Channel channel) {
+        if (channel == null || channel.category == null) return "";
+        return channel.category.trim();
+    }
+
+    /** Índice real (en la lista completa) del canal visible que ocupa esa fila. */
+    private int channelIndexAt(int visiblePosition) {
+        if (visiblePosition < 0 || visiblePosition >= drawerPositions.size()) return -1;
+        return drawerPositions.get(visiblePosition).intValue();
+    }
+
+    private void closeDrawer() {
+        if (drawerHolder != null) drawerHolder.setVisibility(View.GONE);
+        scheduleHide();
+    }

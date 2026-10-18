@@ -1,0 +1,92 @@
+================================================================================
+LENY TV 1.55 — PARTE 1: CONFIGURACIÓN DE COMPILACIÓN (TEXTO COMPLETO)
+================================================================================
+Contenido íntegro de los archivos de configuración del proyecto tal como están
+en el teléfono. No se ha reformateado nada.
+
+<<<<<< ARCHIVO: build.gradle.kts >>>>>>
+plugins {
+    id("com.android.application") version "8.5.2"
+}
+
+android {
+    namespace = "com.pocketbuilder.app_wslenytv1792177359057"
+    compileSdk = 34
+
+    defaultConfig {
+        applicationId = "com.pocketbuilder.app_wslenytv1792177359057"
+        minSdk = 29
+        targetSdk = 34
+        // Versión declarada en los dos sitios (aquí y en AndroidManifest.xml) para
+        // que el APK siempre lleve un código de versión MAYOR que la copia anterior.
+        // Android rechaza con «App no instalada» una actualización cuyo versionCode
+        // sea menor que el de la app ya instalada en el teléfono.
+        versionCode = 55
+        versionName = "1.55"
+    }
+
+}
+
+dependencies {}
+<<<<<< FIN: build.gradle.kts >>>>>>
+
+<<<<<< ARCHIVO: build.sh >>>>>>
+#!/bin/sh
+set -e
+PROJECT_DIR="/storage/emulated/0/Android/data/com.pocketbuilder/files/projects/app_20261016_150239"
+OUTPUT_APK="/storage/emulated/0/Android/data/com.pocketbuilder/files/projects/app_20261016_150239/build/outputs/apk/debug/app_20261016_150239-debug.apk"
+
+echo "[PocketBuilder] Starting local build for com.pocketbuilder.app_wslenytv1792177359057"
+echo "[PocketBuilder] Target dir: $PROJECT_DIR"
+echo "[PocketBuilder] Step 1/4: Validating project structure and manifest..."
+test -f "$PROJECT_DIR/src/main/AndroidManifest.xml" || { echo "Manifest missing"; exit 1; }
+
+echo "[PocketBuilder] Step 2/4: Compiling Java sources with ECJ..."
+
+echo "[PocketBuilder] Step 3/4: Packaging resources with aapt2 and dexing..."
+
+echo "[PocketBuilder] Step 4/4: Signing debug APK with apksigner..."
+echo "[PocketBuilder] Build complete -> $OUTPUT_APK"
+<<<<<< FIN: build.sh >>>>>>
+
+<<<<<< ARCHIVO: workspace.json >>>>>>
+{
+  "id": "ws_leny_tv_1792177359057",
+  "name": "Leny TV",
+  "description": "LENNY TV — CREACIÓN DEL REPRODUCTOR IPTV\n\nQuiero crear una aplicación Android llamada LENNY TV, tomando como referencia visual y de navegación Pelangis TV. Te proporcionaré imágenes de referencia directamente para que puedas adaptar el diseño más adelante.\n\n1. OBJETIVO PRINCIPAL\n\nCrea un reproductor IPTV sencillo, funcional y estable, con un reproductor de vídeo interno basado en AndroidX Media3 ExoPlayer.\n\nLa prioridad es que el reproductor funcione correctamente. No dediques esta primera etapa a crear una interfaz compleja ni agregues funciones innecesarias. Los detalles visuales y las funciones adicionales te los indicaré posteriormente.\n\n2. COMPATIBILIDAD DE CONTENIDO\n\nImplementa soporte para reproducir los formatos y protocolos compatibles con ExoPlayer, incluyendo:\n\n- HLS: \".m3u8\".\n- MPEG-TS: \".ts\".\n- DASH: \".mpd\".\n- MP4: \".mp4\".\n- WebM y otros formatos compatibles con Media3.\n- Enlaces HTTP y HTTPS directos a contenido multimedia.\n\nUtiliza detección de formato cuando sea posible, tanto por extensión como por tipo de contenido. Permite configurar manualmente el tipo de contenido cuando la detección automática falle.\n\nImportante: una lista M3U o M3U8 puede contener canales o enlaces multimedia. Implementa la lectura de listas M3U/M3U8 para identificar sus entradas y reproducir sus enlaces. No confundas la lectura de una lista IPTV con la reproducción directa de un archivo de vídeo.\n\nLa compatibilidad real dependerá del códec, el protocolo, el DRM, las cabeceras HTTP y las características del dispositivo. No declares compatibles todos los enlaces sin probarlos.\n\n3. FUNCIONES BÁSICAS\n\nImplementa inicialmente:\n\n- Campo para introducir una URL de vídeo.\n- Botón para reproducir el enlace.\n- Reproductor interno basado en Media3 ExoPlayer.\n- Reproducción y pausa.\n- Pantalla completa.\n- Control de volumen.\n- Indicador de carga.\n- Mensajes claros cuando un enlace no pueda reproducirse.\n- Gestión de errores sin cerrar inesperadamente la aplicación.\n- Liberación correcta de los recursos del reproductor.\n- Orientación horizontal durante la reproducción a pantalla completa.\n\nSi el enlace requiere cabeceras HTTP específicas, como \"User-Agent\" o \"Referer\", prepara una estructura que permita configurarlas posteriormente.\n\n4. REQUISITOS TÉCNICOS\n\n- Aplicación nativa para Android.\n- Compatibilidad con Android 11 o superior.\n- Uso de AndroidX Media3 ExoPlayer y sus módulos necesarios.\n- Código organizado y fácil de ampliar.\n- Interfaz sencilla y funcional.\n- Preparación para incorporar posteriormente la interfaz IPTV inspirada en Pelangis TV.\n\nNo implementes funciones ficticias ni botones que no realicen ninguna acción.\n\n5. FORMA DE TRABAJO\n\nPrimero crea la base funcional del reproductor y verifica que compile.\n\nRealiza pruebas con enlaces de demostración legales de HLS, DASH y archivos multimedia compatibles. Comprueba también la gestión de errores y la reproducción a pantalla completa.\n\nPrepara el proyecto para generar un APK instalable.\n\nNo añadas todavía funciones avanzadas ni rediseñes la interfaz basándote en suposiciones. Te proporcionaré imágenes e instrucciones adicionales para definir el aspecto y la navegación de LENNY TV.\n\nLa prioridad de esta primera etapa es tener un reproductor interno funcional basado en ExoPlayer, preparado para ampliarse progresivamente.",
+  "prompt": "Prepara un único archivo de texto con todo el código fuente de LENY TV 1.55, para poder copiarlo o compartirlo fuera del teléfono.\n\nIncluye:\n\n- Todos los archivos Java del proyecto.\n- AndroidManifest.xml.\n- Todos los recursos XML y archivos necesarios.\n- Las imágenes y los recursos gráficos, indicando cómo recuperarlos si no pueden incluirse directamente en el texto.\n- build.gradle.kts y build.sh.\n- La estructura completa de carpetas y las rutas originales de los archivos.\n- Cualquier otro archivo necesario para reconstruir el proyecto.\n\nSepara claramente cada archivo con su ruta y nombre, y coloca su contenido completo entre marcadores que permitan identificar dónde empieza y termina.\n\nNo omitas código por ser demasiado largo. Si el archivo único supera el límite permitido, divídelo en varias partes numeradas y consecutivas, sin saltarte ningún archivo.\n\nNo modifiques, recompiles ni reemplaces LENY TV 1.55. Solo prepara la exportación del código fuente para que podamos conservar una copia y trabajar después en una versión independiente compatible con Android Studio y AndroidX Media3.",
+  "displayText": "Starter Android project for Leny TV",
+  "templateType": "TEXT_DISPLAY",
+  "packageName": "com.pocketbuilder.app_wslenytv1792177359057",
+  "testingMode": "AUTOMATED",
+  "agentCommunicationMode": "CONCISE",
+  "createdAt": 1792177359087,
+  "updatedAt": 1792328782191
+}
+<<<<<< FIN: workspace.json >>>>>>
+
+--------------------------------------------------------------------------------
+NOTAS AL RECONSTRUIR FUERA (Gradle / Android Studio)
+--------------------------------------------------------------------------------
+* build.gradle.kts de PocketBuilder tiene "dependencies {}" VACÍO: aquí no hay
+  ninguna librería externa; todo el motor (DASH propio, MediaPlayer, proxy
+  local) usa solo APIs de Android.
+* Fuera hay que añadir settings.gradle.kts + wrapper de Gradle (ver carpeta
+  export/android-studio) y rellenar dependencies con Media3 si se quiere
+  ExoPlayer y DRM CENC real:
+      implementation("androidx.media3:media3-exoplayer:1.4.1")
+      implementation("androidx.media3:media3-exoplayer-dash:1.4.1")
+      implementation("androidx.media3:media3-exoplayer-hls:1.4.1")
+      implementation("androidx.media3:media3-ui:1.4.1")
+      implementation("androidx.media3:media3-datasource-okhttp:1.4.1")
+  (comprueba la última versión estable en el repositorio Maven de Google).
+* compileSdk 34 / minSdk 29 / targetSdk 34 se mantienen.
+* build.sh NO se usa fuera: contiene rutas fijas del teléfono
+  (/storage/emulated/0/Android/data/com.pocketbuilder/...) y es solo el script
+  de la compilación local de PocketBuilder (ECJ + aapt2 + apksigner).
+* workspace.json es un archivo interno de PocketBuilder (nombre del proyecto,
+  descripción, modo de pruebas). No hace falta para compilar; se incluye solo
+  para tener la copia completa de lo que hay en la carpeta del proyecto.
+================================================================================
+FIN DE LA PARTE 1
+================================================================================

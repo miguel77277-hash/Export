@@ -1,0 +1,277 @@
+LENY TV 1.55 — PARTE 44 DE LA EXPORTACION DEL CODIGO FUENTE
+===========================================================
+Contenido LITERAL. Continuacion de PlayerActivity.java (se pega JUSTO DETRAS de
+la parte 43, sin repetir lineas).
+Ruta original: src/main/java/com/pocketbuilder/app_wslenytv1792177359057/PlayerActivity.java
+
+
+<<<<<< CONTINUACION: src/main/java/com/pocketbuilder/app_wslenytv1792177359057/PlayerActivity.java >>>>>>
+    // ---------------------------------------------------------- ajustes del reproductor
+
+    private void openSettingsPanel() {
+        if (settingsHolder != null) closeSettings();
+        final FrameLayout holder = new FrameLayout(this);
+        holder.setBackgroundColor(0xB3000000);
+        holder.setClickable(true);
+        holder.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                closeSettings();
+            }
+        });
+
+        LinearLayout panel = new LinearLayout(this);
+        panel.setOrientation(LinearLayout.VERTICAL);
+        panel.setBackground(Ui.roundedStroke(this, Ui.PANEL, Ui.RED_DEEP, 1.5f, 12f));
+        panel.setPadding(Ui.dpi(this, 14), Ui.dpi(this, 12), Ui.dpi(this, 14), Ui.dpi(this, 12));
+        panel.setClickable(true);
+
+        LinearLayout header = new LinearLayout(this);
+        header.setOrientation(LinearLayout.HORIZONTAL);
+        header.setGravity(Gravity.CENTER_VERTICAL);
+        TextView title = Ui.text(this, "AJUSTES DEL REPRODUCTOR", 14f, Ui.RED, true);
+        title.setLetterSpacing(0.1f);
+        header.addView(title, new LinearLayout.LayoutParams(0,
+                LinearLayout.LayoutParams.WRAP_CONTENT, 1f));
+        TextView close = Ui.iconButton(this, Icons.close(this, Ui.TEXT), "Cerrar los ajustes del reproductor", 38f);
+        LinearLayout.LayoutParams closeParams = new LinearLayout.LayoutParams(
+                Ui.dpi(this, 38), Ui.dpi(this, 38));
+        close.setLayoutParams(closeParams);
+        close.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                closeSettings();
+            }
+        });
+        header.addView(close);
+        panel.addView(header);
+
+        ScrollView scroll = new ScrollView(this);
+        LinearLayout box = new LinearLayout(this);
+        box.setOrientation(LinearLayout.VERTICAL);
+
+        TextView aspectInfo = Ui.text(this, "Modo de imagen actual: " + AppPrefs.aspectLabel(AppPrefs.aspect(this)), 12f, Ui.TEXT, false);
+        aspectInfo.setPadding(0, Ui.dpi(this, 8), 0, Ui.dpi(this, 4));
+        box.addView(aspectInfo);
+
+        LinearLayout aspectRow = new LinearLayout(this);
+        aspectRow.setOrientation(LinearLayout.HORIZONTAL);
+        TextView changeAspect = Ui.primaryButton(this, "Cambiar modo de imagen");
+        changeAspect.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                openAspectPanel();
+            }
+        });
+        aspectRow.addView(changeAspect);
+        TextView quality = Ui.actionButton(this, "Elegir calidad");
+        LinearLayout.LayoutParams qp = new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT);
+        qp.leftMargin = Ui.dpi(this, 8);
+        quality.setLayoutParams(qp);
+        quality.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                openQualityPanel();
+            }
+        });
+        aspectRow.addView(quality);
+        box.addView(aspectRow);
+
+        TextView typeLabel = Ui.text(this, "Tipo de contenido (se aplica al reintentar)", 11f, Ui.TEXT_DIM, true);
+        typeLabel.setPadding(0, Ui.dpi(this, 12), 0, Ui.dpi(this, 4));
+        box.addView(typeLabel);
+        final Ui.SpinnerAdapter typeAdapter = new Ui.SpinnerAdapter(this, FormatDetector.options());
+        final Spinner typeSpinner = new Spinner(this);
+        typeSpinner.setAdapter(typeAdapter);
+        int typeSelection = FormatDetector.AUTO.equals(currentType) ? 0 : typeAdapter.indexOf(currentType);
+        typeSpinner.setSelection(typeSelection);
+        typeSpinner.setContentDescription("Tipo de contenido del canal");
+        box.addView(typeSpinner);
+
+        TextView uaLabel = Ui.text(this, "User-Agent (opcional)", 11f, Ui.TEXT_DIM, true);
+        uaLabel.setPadding(0, Ui.dpi(this, 12), 0, Ui.dpi(this, 4));
+        box.addView(uaLabel);
+        final EditText uaField = new EditText(this);
+        uaField.setHint("Por ejemplo: VLC/3.0.18 LibVLC/3.0.18");
+        uaField.setHintTextColor(Ui.TEXT_MUTED);
+        uaField.setTextColor(Ui.TEXT);
+        uaField.setTextSize(12f);
+        uaField.setSingleLine(true);
+        uaField.setInputType(InputType.TYPE_CLASS_TEXT);
+        uaField.setText(AppPrefs.userAgent(this));
+        uaField.setBackground(Ui.roundedStroke(this, Ui.BG, Ui.BLUE_DEEP, 1f, 6f));
+        uaField.setPadding(Ui.dpi(this, 10), Ui.dpi(this, 8), Ui.dpi(this, 10), Ui.dpi(this, 8));
+        box.addView(uaField);
+
+        TextView refLabel = Ui.text(this, "Referer (opcional)", 11f, Ui.TEXT_DIM, true);
+        refLabel.setPadding(0, Ui.dpi(this, 12), 0, Ui.dpi(this, 4));
+        box.addView(refLabel);
+        final EditText refField = new EditText(this);
+        refField.setHint("Por ejemplo: https://mi-proveedor.com/");
+        refField.setHintTextColor(Ui.TEXT_MUTED);
+        refField.setTextColor(Ui.TEXT);
+        refField.setTextSize(12f);
+        refField.setSingleLine(true);
+        refField.setInputType(InputType.TYPE_CLASS_TEXT);
+        refField.setText(AppPrefs.referer(this));
+        refField.setBackground(Ui.roundedStroke(this, Ui.BG, Ui.BLUE_DEEP, 1f, 6f));
+        refField.setPadding(Ui.dpi(this, 10), Ui.dpi(this, 8), Ui.dpi(this, 10), Ui.dpi(this, 8));
+        box.addView(refField);
+
+        // Cabeceras adicionales: hay proveedores que exigen Origin, Cookie o una
+        // cabecera propia. Se envían al manifiesto .mpd, a los datos iniciales y a
+        // cada trozo del canal, igual que el User-Agent y el Referer.
+        TextView extraLabel = Ui.text(this, "Cabeceras adicionales (una por línea: Nombre: valor)",
+                11f, Ui.TEXT_DIM, true);
+        extraLabel.setPadding(0, Ui.dpi(this, 12), 0, Ui.dpi(this, 4));
+        box.addView(extraLabel);
+        final EditText extraField = new EditText(this);
+        extraField.setHint("Por ejemplo: Origin: https://mi-proveedor.com");
+        extraField.setHintTextColor(Ui.TEXT_MUTED);
+        extraField.setTextColor(Ui.TEXT);
+        extraField.setTextSize(12f);
+        extraField.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_FLAG_MULTI_LINE);
+        extraField.setMinLines(2);
+        extraField.setMaxLines(3);
+        extraField.setText(AppPrefs.extraHeaders(this));
+        extraField.setBackground(Ui.roundedStroke(this, Ui.BG, Ui.BLUE_DEEP, 1f, 6f));
+        extraField.setPadding(Ui.dpi(this, 10), Ui.dpi(this, 8), Ui.dpi(this, 10), Ui.dpi(this, 8));
+        box.addView(extraField);
+
+        TextView volumeLabel = Ui.text(this, "Volumen", 11f, Ui.TEXT_DIM, true);
+        volumeLabel.setPadding(0, Ui.dpi(this, 12), 0, 0);
+        box.addView(volumeLabel);
+        SeekBar volume = new SeekBar(this);
+        volume.setMax(100);
+        volume.setProgress(volumePercent());
+        volume.setContentDescription("Volumen del reproductor");
+        volume.setProgressTintList(ColorStateList.valueOf(Ui.RED));
+        volume.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener() {
+            @Override
+            public void onProgressChanged(SeekBar seekBar, int value, boolean fromUser) {
+                if (fromUser) setVolumePercent(value / 100f);
+            }
+
+            @Override
+            public void onStartTrackingTouch(SeekBar seekBar) {
+            }
+
+            @Override
+            public void onStopTrackingTouch(SeekBar seekBar) {
+            }
+        });
+        box.addView(volume);
+
+        TextView brightnessLabel = Ui.text(this, "Brillo de la app", 11f, Ui.TEXT_DIM, true);
+        brightnessLabel.setPadding(0, Ui.dpi(this, 12), 0, 0);
+        box.addView(brightnessLabel);
+        SeekBar brightness = new SeekBar(this);
+        brightness.setMax(100);
+        brightness.setProgress(Math.round(brightnessValue() * 100f));
+        brightness.setContentDescription("Brillo de la aplicación");
+        brightness.setProgressTintList(ColorStateList.valueOf(Ui.BLUE));
+        brightness.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener() {
+            @Override
+            public void onProgressChanged(SeekBar seekBar, int value, boolean fromUser) {
+                if (fromUser) setBrightness(Math.max(0.05f, value / 100f));
+            }
+
+            @Override
+            public void onStartTrackingTouch(SeekBar seekBar) {
+            }
+
+            @Override
+            public void onStopTrackingTouch(SeekBar seekBar) {
+            }
+        });
+        box.addView(brightness);
+
+        TextView keep = Ui.text(this, "Mantener la pantalla encendida al reproducir", 11f, Ui.TEXT_DIM, true);
+        keep.setPadding(0, Ui.dpi(this, 12), 0, 0);
+        box.addView(keep);
+        android.widget.Switch screen = new android.widget.Switch(this);
+        screen.setChecked(AppPrefs.keepScreenOn(this));
+        screen.setContentDescription("Mantener la pantalla encendida");
+        screen.setOnCheckedChangeListener(new android.widget.CompoundButton.OnCheckedChangeListener() {
+            @Override
+            public void onCheckedChanged(android.widget.CompoundButton buttonView, boolean isChecked) {
+                AppPrefs.setKeepScreenOn(PlayerActivity.this, isChecked);
+                applyKeepScreenOn();
+            }
+        });
+        box.addView(screen);
+
+        TextView note = Ui.text(this, "El brillo se aplica solo dentro de la app, no al sistema. "
+                + "Desliza arriba o abajo en la mitad izquierda para el volumen y en la derecha para el brillo. "
+                + "Las cabeceras de cada canal se leen solas de su bloque de la lista (#EXTINF, #EXTVLCOPT, "
+                + "#KODIPROP, #EXTHTTP y lo que va detrás de \"|\") y se aplican a ese canal antes del primer "
+                + "intento, tanto al manifiesto DASH como a cada trozo; lo de aquí solo se usa cuando el canal "
+                + "no trae las suyas. Si la lista declara DRM, el motor solo lo identifica: no descifra "
+                + "contenido protegido.", 11f, Ui.TEXT_MUTED, false);
+        note.setLineSpacing(Ui.dp(this, 2f), 1f);
+        note.setPadding(0, Ui.dpi(this, 12), 0, 0);
+        box.addView(note);
+
+        scroll.addView(box);
+        panel.addView(scroll, new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f));
+
+        LinearLayout buttons = new LinearLayout(this);
+        buttons.setOrientation(LinearLayout.HORIZONTAL);
+        buttons.setGravity(Gravity.END);
+        TextView cancel = Ui.actionButton(this, "Cerrar");
+        cancel.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                closeSettings();
+            }
+        });
+        buttons.addView(cancel);
+        TextView apply = Ui.primaryButton(this, "Aplicar y reintentar");
+        LinearLayout.LayoutParams ap = new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT);
+        ap.leftMargin = Ui.dpi(this, 8);
+        apply.setLayoutParams(ap);
+        apply.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                AppPrefs.setUserAgent(PlayerActivity.this, uaField.getText().toString());
+                AppPrefs.setReferer(PlayerActivity.this, refField.getText().toString());
+                AppPrefs.setExtraHeaders(PlayerActivity.this, extraField.getText().toString());
+                String selection = typeAdapter.labelAt(typeSpinner.getSelectedItemPosition());
+                manualType = FormatDetector.isAuto(selection) ? "" : selection;
+                closeSettings();
+                startPlayback();
+            }
+        });
+        buttons.addView(apply);
+        LinearLayout.LayoutParams buttonsParams = new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT);
+        buttonsParams.topMargin = Ui.dpi(this, 10);
+        panel.addView(buttons, buttonsParams);
+
+        // El panel de ajustes se ajusta al ancho real: 470 dp fijos se salían de la
+        // pantalla en un móvil en vertical y los campos quedaban cortados.
+        int settingsWidth = Math.min(Ui.dpi(this, 470),
+                getResources().getDisplayMetrics().widthPixels - Ui.dpi(this, 24));
+        FrameLayout.LayoutParams panelParams = new FrameLayout.LayoutParams(
+                Math.max(Ui.dpi(this, 220), settingsWidth), FrameLayout.LayoutParams.MATCH_PARENT);
+        panelParams.gravity = Gravity.CENTER;
+        panelParams.topMargin = Ui.dpi(this, 10);
+        panelParams.bottomMargin = Ui.dpi(this, 10);
+        holder.addView(panel, panelParams);
+
+        settingsHolder = holder;
+        root.addView(settingsHolder, new FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT));
+        ui.removeCallbacks(hideControls);
+    }
+
+    private void closeSettings() {
+        if (settingsHolder != null) {
+            root.removeView(settingsHolder);
+            settingsHolder = null;
+            scheduleHide();
+        }
+    }

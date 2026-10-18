@@ -1,0 +1,229 @@
+LENY TV 1.55 — PARTE 42 DE LA EXPORTACION DEL CODIGO FUENTE
+===========================================================
+Contenido LITERAL. Continuacion de PlayerActivity.java (se pega JUSTO DETRAS de
+la parte 41, sin repetir lineas).
+Ruta original: src/main/java/com/pocketbuilder/app_wslenytv1792177359057/PlayerActivity.java
+
+
+<<<<<< CONTINUACION: src/main/java/com/pocketbuilder/app_wslenytv1792177359057/PlayerActivity.java >>>>>>
+    private void showMessage(String title, String body, boolean showRetry) {
+        if (messageHolder == null) return;
+        messageText = title + "\n" + body;
+        messageTitle.setText(title);
+        messageBody.setText(body);
+        messageRetry.setVisibility(showRetry ? View.VISIBLE : View.GONE);
+        messageHolder.setVisibility(View.VISIBLE);
+        ui.removeCallbacks(hideControls);
+        setControlsVisible(true);
+        ui.removeCallbacks(fitMessage);
+        ui.post(fitMessage);
+        ui.postDelayed(fitMessage, 80);
+    }
+
+    private final Runnable fitMessage = new Runnable() {
+        @Override
+        public void run() {
+            fitMessageBody();
+        }
+    };
+
+    /**
+     * Ajusta el alto del texto del aviso: crece con el contenido hasta media
+     * pantalla y, si el texto es más largo, se puede desplazar para leerlo todo.
+     */
+    private void fitMessageBody() {
+        if (messageScroll == null || messageBody == null) return;
+        int maxHeight = Math.max(Ui.dpi(this, 140),
+                getResources().getDisplayMetrics().heightPixels / 2);
+        int available = messageScroll.getWidth();
+        if (available <= 0) {
+            available = Math.max(Ui.dpi(this, 200), Math.min(Ui.dpi(this, 560),
+                    getResources().getDisplayMetrics().widthPixels - Ui.dpi(this, 96)));
+        }
+        try {
+            messageBody.measure(View.MeasureSpec.makeMeasureSpec(available, View.MeasureSpec.AT_MOST),
+                    View.MeasureSpec.makeMeasureSpec(0, View.MeasureSpec.UNSPECIFIED));
+        } catch (Throwable ignored) {
+            return;
+        }
+        int height = Math.min(Math.max(Ui.dpi(this, 60), messageBody.getMeasuredHeight()), maxHeight);
+        ViewGroup.LayoutParams raw = messageScroll.getLayoutParams();
+        if (raw != null && raw.height != height) {
+            raw.height = height;
+            messageScroll.setLayoutParams(raw);
+        }
+    }
+
+    private void hideMessage() {
+        if (messageHolder != null) messageHolder.setVisibility(View.GONE);
+    }
+
+    /**
+     * Prueba el enlace del canal actual y muestra un informe con lo que responde el
+     * servidor paso a paso (código HTTP, tipo de contenido, si es un manifiesto DASH
+     * válido, sus pistas, códecs y si lleva DRM). No cambia la reproducción.
+     */
+    private void probeCurrentLink() {
+        final Channel channel = currentChannel();
+        final Map<String, String> headers = channelHeaders(channel);
+        showMessage("Comprobando el enlace…",
+                "Se está pidiendo el archivo al servidor con las cabeceras configuradas."
+                        + "\n\nEn cuanto responda aparecerá aquí el informe real: código HTTP, tipo de"
+                        + " contenido, tipo de manifiesto, pistas y protección.", false);
+        background.execute(new Runnable() {
+            @Override
+            public void run() {
+                String report;
+                try {
+                    report = DashProbe.report(channel.url, headers);
+                } catch (Throwable t) {
+                    report = "No se pudo completar la prueba del enlace: " + describe(t);
+                }
+                final String text = report;
+                Diag.add("Reproductor · informe del enlace del canal " + channel.name + ":\n" + text);
+                Diag.save(PlayerActivity.this);
+                ui.post(new Runnable() {
+                    @Override
+                    public void run() {
+                        if (isFinishing() || isDestroyed()) return;
+                        showMessage("Informe del enlace", text, true);
+                    }
+                });
+            }
+        });
+    }
+
+    /** Copia el motivo del fallo para que el usuario pueda enviarlo. */
+    private void copyMessage() {
+        String text = messageText.length() > 0 ? messageText : "LENY TV · reproductor";
+        try {
+            android.content.ClipboardManager clipboard =
+                    (android.content.ClipboardManager) getSystemService(CLIPBOARD_SERVICE);
+            if (clipboard == null) {
+                toast("No se pudo copiar el motivo");
+                return;
+            }
+            clipboard.setPrimaryClip(android.content.ClipData.newPlainText("LENY TV", text));
+            Diag.save(this);
+            toast("Motivo copiado: ya puedes pegarlo");
+        } catch (Throwable t) {
+            toast("No se pudo copiar el motivo");
+        }
+    }
+
+    private String describeError(int what, int extra) {
+        String message;
+        switch (extra) {
+            case MediaPlayer.MEDIA_ERROR_IO:
+                message = "No se pudo abrir el enlace: problema de conexión o el servidor rechazó la petición.";
+                break;
+            case MediaPlayer.MEDIA_ERROR_MALFORMED:
+                message = "El contenido está dañado o usa un formato que este teléfono no puede leer.";
+                break;
+            case MediaPlayer.MEDIA_ERROR_UNSUPPORTED:
+                message = "El códec o el tipo de archivo no está soportado por este teléfono.";
+                break;
+            case MediaPlayer.MEDIA_ERROR_TIMED_OUT:
+                message = "Se agotó el tiempo de espera al conectar con el servidor.";
+                break;
+            case Integer.MIN_VALUE:
+                // Este código (-2147483648) no significa nada por sí solo: es el
+                // "sin detalle" del reproductor de Android.
+                message = "El reproductor de Android no dio ningún detalle: devolvió el código genérico"
+                        + " -2147483648, que no es un código HTTP ni un motivo real.";
+                break;
+            default:
+                message = MediaErrors.explain(what, extra);
+                break;
+        }
+        if (what == MediaPlayer.MEDIA_ERROR_SERVER_DIED) {
+            message = "El servicio de medios de Android se reinició. Vuelve a intentarlo.";
+        }
+        return message;
+    }
+
+    private String playbackHints() {
+        return "Comprueba que el enlace esté activo y que haya conexión.\n"
+                + "Algunos servidores necesitan cabeceras User-Agent o Referer: configúralas en los ajustes del reproductor.\n"
+                + "También puede ser un códec (H.265, AC-3) o un contenido con DRM que este teléfono no admite.";
+    }
+
+    private static String describe(Throwable t) {
+        String message = t == null ? null : t.getMessage();
+        if (message == null || message.length() == 0) {
+            message = t == null ? "error desconocido" : t.getClass().getSimpleName();
+        }
+        return message;
+    }
+
+    // ------------------------------------------------------------------ imagen
+
+    private void applyAspect() {
+        if (surfaceView == null || videoBox == null) return;
+        int boxWidth = videoBox.getWidth();
+        int boxHeight = videoBox.getHeight();
+        if (boxWidth <= 0 || boxHeight <= 0) return;
+
+        if (videoWidth <= 0 || videoHeight <= 0) {
+            surfaceView.setLayoutParams(new FrameLayout.LayoutParams(
+                    FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT, Gravity.CENTER));
+            return;
+        }
+
+        String mode = AppPrefs.aspect(this);
+        float videoAspect = (float) videoWidth / (float) videoHeight;
+        float boxAspect = (float) boxWidth / (float) boxHeight;
+        int width;
+        int height;
+
+        if (AppPrefs.ASPECT_FILL.equals(mode)) {
+            width = boxWidth;
+            height = boxHeight;
+        } else if (AppPrefs.ASPECT_CROP.equals(mode)) {
+            if (videoAspect > boxAspect) {
+                height = boxHeight;
+                width = Math.round(height * videoAspect);
+            } else {
+                width = boxWidth;
+                height = Math.round(width / videoAspect);
+            }
+        } else if (AppPrefs.ASPECT_ORIGINAL.equals(mode)) {
+            width = Math.min(videoWidth, boxWidth);
+            height = Math.round(width / videoAspect);
+        } else {
+            if (videoAspect > boxAspect) {
+                width = boxWidth;
+                height = Math.round(width / videoAspect);
+            } else {
+                height = boxHeight;
+                width = Math.round(height * videoAspect);
+            }
+        }
+        if (width <= 0 || height <= 0) return;
+        FrameLayout.LayoutParams params = new FrameLayout.LayoutParams(width, height, Gravity.CENTER);
+        surfaceView.setLayoutParams(params);
+    }
+
+    private void openAspectPanel() {
+        String[] labels = AppPrefs.aspectLabels();
+        final String[] keys = AppPrefs.aspectKeys();
+        int selected = AppPrefs.aspectIndex(AppPrefs.aspect(this));
+        showChoicePanel("MODO DE IMAGEN", labels, selected, new ChoiceListener() {
+            @Override
+            public void onChoice(int position) {
+                closeChoice();
+                if (position < 0 || position >= keys.length) return;
+                AppPrefs.setAspect(PlayerActivity.this, keys[position]);
+                applyAspect();
+                toast("Modo de imagen: " + AppPrefs.aspectLabel(keys[position]));
+            }
+        });
+    }
+
+    private void openQualityPanel() {
+        if (dash != null) {
+            openDashQualityPanel();
+            return;
+        }
+        openStreamQualityPanel();
+    }

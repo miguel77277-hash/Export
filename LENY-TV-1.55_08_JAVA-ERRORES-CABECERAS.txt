@@ -1,0 +1,649 @@
+LENY TV 1.55 — CODIGO FUENTE REAL — PARTE 8 (ERRORES, PANTALLA COMPLETA Y CABECERAS)
+===================================================================================
+Texto LITERAL de 3 archivos Java del proyecto original.
+
+  1. src/main/java/com/pocketbuilder/app_wslenytv1792177359057/MediaErrors.java  (7.543 bytes)
+  2. src/main/java/com/pocketbuilder/app_wslenytv1792177359057/Immersion.java   (7.390 bytes)
+  3. src/main/java/com/pocketbuilder/app_wslenytv1792177359057/Headers.java    (12.621 bytes)
+
+
+<<<<<< ARCHIVO: src/main/java/com/pocketbuilder/app_wslenytv1792177359057/MediaErrors.java >>>>>>
+package com.pocketbuilder.app_wslenytv1792177359057;
+
+import android.media.MediaPlayer;
+
+import java.io.IOException;
+import java.util.Locale;
+
+/**
+ * Traduce los errores de reproducción a motivos reales.
+ *
+ * El reproductor de Android solo devuelve dos números (what y extra) y muchas
+ * veces el segundo es -2147483648 (Integer.MIN_VALUE), que no explica nada: es
+ * simplemente "sin detalle". Esta clase convierte esos códigos en una frase que
+ * distingue entre problema de conexión, respuesta del servidor, códec no
+ * soportado, contenido dañado, tiempo de espera o protección DRM.
+ */
+final class MediaErrors {
+
+    /** Fallo con código HTTP real (lo lanza el motor DASH al pedir manifiesto o trozos). */
+    static final class Http extends IOException {
+        final int code;
+
+        Http(int code, String message) {
+            super(message);
+            this.code = code;
+        }
+    }
+
+    private MediaErrors() {
+    }
+
+    /** Categoría corta del fallo, para el registro y el resumen en pantalla. */
+    static String kind(int what, int extra) {
+        if (what == MediaPlayer.MEDIA_ERROR_SERVER_DIED) return "el servicio de medios de Android se reinició";
+        switch (extra) {
+            case MediaPlayer.MEDIA_ERROR_IO:
+                return "conexión con el servidor";
+            case MediaPlayer.MEDIA_ERROR_TIMED_OUT:
+                return "tiempo de espera agotado";
+            case MediaPlayer.MEDIA_ERROR_MALFORMED:
+                return "contenido dañado o formato no reconocido";
+            case MediaPlayer.MEDIA_ERROR_UNSUPPORTED:
+                return "códec no soportado por este teléfono";
+            case MediaPlayer.MEDIA_ERROR_NOT_VALID_FOR_PROGRESSIVE_PLAYBACK:
+                return "el servidor no permite reproducir el archivo por partes";
+            default:
+                return "error del reproductor";
+        }
+    }
+
+    /** Explicación en lenguaje sencillo de un error del reproductor de Android. */
+    static String explain(int what, int extra) {
+        StringBuilder sb = new StringBuilder();
+        if (what == MediaPlayer.MEDIA_ERROR_SERVER_DIED) {
+            sb.append("El servicio de medios de Android se reinició (código 100). "
+                    + "Vuelve a intentarlo; si repite, reinicia el teléfono.");
+            return sb.toString();
+        }
+        switch (extra) {
+            case MediaPlayer.MEDIA_ERROR_IO:
+                sb.append("No se pudo leer el contenido: la conexión falló o el servidor rechazó la "
+                        + "petición (puede pedir cabeceras User-Agent/Referer o haber cortado el enlace).");
+                break;
+            case MediaPlayer.MEDIA_ERROR_TIMED_OUT:
+                sb.append("El servidor tardó demasiado en enviar datos (se agotó el tiempo de espera).");
+                break;
+            case MediaPlayer.MEDIA_ERROR_MALFORMED:
+                sb.append("El contenido llegó dañado o en un formato que el reproductor no reconoce "
+                        + "(por ejemplo, un trozo incompleto o un manifiesto mal formado).");
+                break;
+            case MediaPlayer.MEDIA_ERROR_UNSUPPORTED:
+                sb.append("El códec de vídeo o de audio no está soportado por este teléfono "
+                        + "(es habitual con H.265/HEVC, AV1 o sonido AC-3/E-AC-3).");
+                break;
+            case MediaPlayer.MEDIA_ERROR_NOT_VALID_FOR_PROGRESSIVE_PLAYBACK:
+                sb.append("El servidor no permite reproducir este archivo por partes; algunos servidores "
+                        + "solo aceptan descargarlo entero.");
+                break;
+            case Integer.MIN_VALUE:
+                sb.append("El reproductor de Android no dio ningún detalle: devolvió el código genérico "
+                        + "-2147483648 (no es un código HTTP ni un motivo real).");
+                break;
+            default:
+                sb.append("El reproductor informó del código ").append(extra)
+                        .append(", que no identifica por sí solo la causa.");
+                break;
+        }
+        sb.append(" (what=").append(what).append(", extra=").append(extra).append(')');
+        return sb.toString();
+    }
+
+    /** Motivo real de una respuesta HTTP, en lenguaje sencillo. */
+    static String httpReason(int code) {
+        if (code == 400) return "la petición está mal formada (400)";
+        if (code == 401) return "el servidor pide usuario y contraseña (401)";
+        if (code == 403) return "el proveedor rechazó la petición (403): normalmente faltan las "
+                + "cabeceras User-Agent o Referer correctas";
+        if (code == 404) return "esa dirección ya no existe en el servidor (404)";
+        if (code == 405) return "el servidor no acepta peticiones de ese tipo (405)";
+        if (code == 410) return "el enlace se retiró del servidor (410)";
+        if (code == 416) return "el servidor rechazó la petición por el rango pedido (416)";
+        if (code == 429) return "el servidor está limitando las peticiones: demasiadas peticiones "
+                + "seguidas (429)";
+        if (code == 500) return "el servidor del proveedor falló por dentro (500)";
+        if (code == 502 || code == 503 || code == 504) {
+            return "el servidor del proveedor no está disponible en este momento (" + code + ")";
+        }
+        if (code >= 400 && code < 500) return "el servidor respondió con el código " + code;
+        if (code >= 500) return "el servidor respondió con el código " + code;
+        return "el servidor respondió con el código " + code;
+    }
+
+    /** true si el código HTTP se puede resolver simplemente volviendo a intentarlo. */
+    static boolean retryable(int code) {
+        return code == 408 || code == 429 || code >= 500;
+    }
+
+    /** true si el fallo apunta a la falta de cabeceras del proveedor. */
+    static boolean looksLikeAuthorization(int code) {
+        return code == 401 || code == 403;
+    }
+
+    /**
+     * Explicación de un fallo de red al pedir el manifiesto o los trozos, con el
+     * motivo real y las cabeceras que se enviaron (sin datos privados).
+     */
+    static String describeNetwork(Throwable e, java.util.Map<String, String> headers) {
+        StringBuilder sb = new StringBuilder();
+        if (e instanceof Http) {
+            Http http = (Http) e;
+            sb.append(httpReason(http.code));
+            if (looksLikeAuthorization(http.code)) {
+                sb.append(". Escribe el User-Agent y el Referer que use tu proveedor en"
+                        + " AJUSTES DEL REPRODUCTOR y vuelve a intentarlo.");
+            } else if (http.code == 404 || http.code == 410) {
+                sb.append(". Comprueba que el enlace del canal siga siendo válido en tu proveedor.");
+            } else if (retryable(http.code)) {
+                sb.append(". Es un fallo temporal del servidor: vuelve a intentarlo en unos segundos.");
+            }
+        } else {
+            sb.append(Net.describe(e));
+        }
+        sb.append(".\n\nCabeceras enviadas: ").append(Net.describeHeaders(headers));
+        return sb.toString();
+    }
+
+    /** Tipo de contenido legible para el registro (por ejemplo video/mp4). */
+    static String normalizeType(String contentType) {
+        if (contentType == null) return "";
+        String clean = contentType.trim().toLowerCase(Locale.US);
+        int semi = clean.indexOf(';');
+        if (semi > 0) clean = clean.substring(0, semi).trim();
+        return clean;
+    }
+}
+<<<<<< FIN: src/main/java/com/pocketbuilder/app_wslenytv1792177359057/MediaErrors.java >>>>>>
+
+
+<<<<<< ARCHIVO: src/main/java/com/pocketbuilder/app_wslenytv1792177359057/Immersion.java >>>>>>
+package com.pocketbuilder.app_wslenytv1792177359057;
+
+import android.app.Activity;
+import android.os.Build;
+import android.os.Handler;
+import android.os.Looper;
+import android.view.DisplayCutout;
+import android.view.View;
+import android.view.Window;
+import android.view.WindowInsets;
+import android.view.WindowInsetsController;
+import android.view.WindowManager;
+
+/**
+ * Pantalla completa de LENY TV.
+ *
+ * En los teléfonos modernos la app no llegaba hasta el borde superior porque el
+ * sistema reserva el espacio del "notch" (orificio o muesca de la cámara) salvo
+ * que se pida lo contrario. Aquí se hace todo lo necesario:
+ *
+ *  1. Se permite que la ventana use la zona del recorte (shortEdges).
+ *  2. Se ocultan la barra de estado y la barra de navegación, y se vuelven a
+ *     ocultar si el sistema las muestra por su cuenta.
+ *  3. El fondo llega hasta el borde en TODAS las pantallas: los márgenes del
+ *     recorte se reparten entre los contenedores que tienen su propio color
+ *     (nunca al contenedor raíz, que era lo que dejaba una franja vacía).
+ */
+final class Immersion {
+
+    private static final int LEGACY_FLAGS = View.SYSTEM_UI_FLAG_LAYOUT_STABLE
+            | View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION
+            | View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN
+            | View.SYSTEM_UI_FLAG_HIDE_NAVIGATION
+            | View.SYSTEM_UI_FLAG_FULLSCREEN
+            | View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY;
+
+    private static final int CHECK_INTERVAL_MS = 2500;
+
+    private static final Handler HANDLER = new Handler(Looper.getMainLooper());
+    private static Runnable keeper;
+
+    /** Recibe los márgenes de la zona de la cámara (notch). */
+    interface InsetCallback {
+        void onInsets(int left, int top, int right, int bottom);
+    }
+
+    private Immersion() {
+    }
+
+    /** Oculta las barras del sistema y deja que la ventana use toda la pantalla. */
+    static void apply(Activity activity) {
+        if (activity == null) return;
+        try {
+            Window window = activity.getWindow();
+            if (window == null) return;
+            View decor = window.getDecorView();
+            if (decor == null) return;
+
+            if (Build.VERSION.SDK_INT >= 28) {
+                WindowManager.LayoutParams params = window.getAttributes();
+                if (params != null
+                        && params.layoutInDisplayCutoutMode
+                        != WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES) {
+                    params.layoutInDisplayCutoutMode =
+                            WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES;
+                    window.setAttributes(params);
+                }
+            }
+            if (Build.VERSION.SDK_INT >= 30) {
+                window.setDecorFitsSystemWindows(false);
+                WindowInsetsController controller = window.getInsetsController();
+                if (controller != null) {
+                    controller.setSystemBarsBehavior(
+                            WindowInsetsController.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE);
+                    controller.hide(WindowInsets.Type.statusBars() | WindowInsets.Type.navigationBars());
+                }
+            } else {
+                decor.setSystemUiVisibility(LEGACY_FLAGS);
+            }
+            window.addFlags(WindowManager.LayoutParams.FLAG_FULLSCREEN);
+        } catch (Throwable ignored) {
+            // Si el sistema no permite ocultarlas, la app sigue funcionando igual.
+        }
+    }
+
+    /** Vuelve a mostrar las barras del sistema (botón "pantalla completa" apagado). */
+    static void showBars(Activity activity) {
+        if (activity == null) return;
+        try {
+            Window window = activity.getWindow();
+            if (window == null) return;
+            View decor = window.getDecorView();
+            window.clearFlags(WindowManager.LayoutParams.FLAG_FULLSCREEN);
+            if (Build.VERSION.SDK_INT >= 30) {
+                window.setDecorFitsSystemWindows(true);
+                WindowInsetsController controller = window.getInsetsController();
+                if (controller != null) {
+                    controller.show(WindowInsets.Type.statusBars() | WindowInsets.Type.navigationBars());
+                }
+            }
+            if (decor != null) decor.setSystemUiVisibility(View.SYSTEM_UI_FLAG_VISIBLE);
+        } catch (Throwable ignored) {
+        }
+    }
+
+    /**
+     * Aplica la pantalla completa y la mantiene mientras esta actividad está en
+     * primer plano (algunos teléfonos vuelven a mostrar las barras solas).
+     */
+    static void keepHidden(final Activity activity) {
+        apply(activity);
+        if (activity == null) return;
+        try {
+            View decor = activity.getWindow().getDecorView();
+            if (decor != null) {
+                decor.setOnSystemUiVisibilityChangeListener(new View.OnSystemUiVisibilityChangeListener() {
+                    @Override
+                    public void onSystemUiVisibilityChange(int visibility) {
+                        int hiddenFlags = View.SYSTEM_UI_FLAG_FULLSCREEN | View.SYSTEM_UI_FLAG_HIDE_NAVIGATION;
+                        if ((visibility & hiddenFlags) != hiddenFlags) apply(activity);
+                    }
+                });
+            }
+        } catch (Throwable ignored) {
+        }
+        stopKeeper();
+        keeper = new Runnable() {
+            @Override
+            public void run() {
+                if (activity.isFinishing()) return;
+                apply(activity);
+                HANDLER.postDelayed(this, CHECK_INTERVAL_MS);
+            }
+        };
+        HANDLER.postDelayed(keeper, CHECK_INTERVAL_MS);
+    }
+
+    /** Deja de vigilar (la actividad pasa a segundo plano o se cierra). */
+    static void stopKeeper() {
+        if (keeper != null) {
+            HANDLER.removeCallbacks(keeper);
+            keeper = null;
+        }
+    }
+
+    /**
+     * Avisa de los márgenes que ocupa la cámara frontal (notch) para que cada
+     * contenedor con su propio color los rellene por dentro. El resultado es que
+     * el fondo llega hasta el borde de la pantalla y el texto no queda tapado.
+     */
+    static void listenInsets(final View view, final InsetCallback callback) {
+        if (view == null || callback == null) return;
+        try {
+            view.setOnApplyWindowInsetsListener(new View.OnApplyWindowInsetsListener() {
+                @Override
+                public WindowInsets onApplyWindowInsets(View v, WindowInsets insets) {
+                    int left = 0;
+                    int top = 0;
+                    int right = 0;
+                    int bottom = 0;
+                    if (Build.VERSION.SDK_INT >= 28 && insets != null) {
+                        DisplayCutout cutout = insets.getDisplayCutout();
+                        if (cutout != null) {
+                            left = cutout.getSafeInsetLeft();
+                            top = cutout.getSafeInsetTop();
+                            right = cutout.getSafeInsetRight();
+                            bottom = cutout.getSafeInsetBottom();
+                        }
+                    }
+                    callback.onInsets(left, top, right, bottom);
+                    return insets;
+                }
+            });
+            view.requestApplyInsets();
+        } catch (Throwable ignored) {
+        }
+    }
+}
+<<<<<< FIN: src/main/java/com/pocketbuilder/app_wslenytv1792177359057/Immersion.java >>>>>>
+
+
+<<<<<< ARCHIVO: src/main/java/com/pocketbuilder/app_wslenytv1792177359057/Headers.java >>>>>>
+package com.pocketbuilder.app_wslenytv1792177359057;
+
+import java.util.Locale;
+import java.util.Map;
+import java.util.TreeMap;
+
+/**
+ * Cabeceras HTTP de LENY TV.
+ *
+ * Reúne lo que antes estaba repartido en varios archivos (y a medias): escribir
+ * bien el nombre de una cabecera, quitar saltos de línea de los valores, juntar
+ * las del canal con las generales dando prioridad a las del canal, describirlas
+ * para el diagnóstico SIN enseñar cookies ni claves, y transportarlas de la
+ * cuadrícula a la pantalla del reproductor.
+ *
+ * Todo aquí es tolerante a fallos: un dato raro de una lista nunca debe cerrar
+ * la app, simplemente se ignora.
+ */
+final class Headers {
+
+    /** Tope de un valor de cabecera (un valor enorme delataría una lista dañada). */
+    private static final int MAX_VALUE = 2000;
+
+    private Headers() {
+    }
+
+    static Map<String, String> empty() {
+        return new TreeMap<String, String>();
+    }
+
+    /** Quita espacios, incluidos los invisibles que se cuelan al copiar y pegar. */
+    static String trim(String value) {
+        if (value == null) return "";
+        int start = 0;
+        int end = value.length();
+        while (start < end && isSpace(value.charAt(start))) start++;
+        while (end > start && isSpace(value.charAt(end - 1))) end--;
+        return value.substring(start, end);
+    }
+
+    private static boolean isSpace(char c) {
+        return c == ' ' || c == '\t' || c == '\r' || c == '\n' || c == '\u00A0'
+                || c == '\uFEFF' || c == '\u000B' || c == '\f';
+    }
+
+    /**
+     * Nombre de cabecera bien escrito: "user-agent" → "User-Agent",
+     * "x-mi-cabecera" → "X-Mi-Cabecera". Devuelve "" si el nombre no es válido
+     * (así no se envía jamás una cabecera con caracteres imposibles).
+     */
+    static String canonical(String raw) {
+        String name = trim(raw);
+        if (name.length() == 0) return "";
+        int colon = name.indexOf(':');
+        if (colon > 0) name = trim(name.substring(0, colon));
+        if (name.length() == 0 || name.length() > 64) return "";
+        StringBuilder normalized = new StringBuilder(name.length());
+        for (int i = 0; i < name.length(); i++) {
+            char c = name.charAt(i);
+            if ((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z')
+                    || (c >= '0' && c <= '9') || c == '-') {
+                normalized.append(c);
+            } else if (c == '_') {
+                normalized.append('-');
+            } else {
+                return "";
+            }
+        }
+        String[] parts = normalized.toString().split("-");
+        StringBuilder out = new StringBuilder(normalized.length());
+        for (int i = 0; i < parts.length; i++) {
+            if (parts[i].length() == 0) continue;
+            if (out.length() > 0) out.append('-');
+            out.append(parts[i].substring(0, 1).toUpperCase(Locale.US));
+            if (parts[i].length() > 1) {
+                out.append(parts[i].substring(1).toLowerCase(Locale.US));
+            }
+        }
+        String result = out.toString();
+        if ("Referrer".equals(result)) return "Referer";
+        return result;
+    }
+
+    /** Valor limpio: nunca con saltos de línea y con un tope de longitud. */
+    static String value(String raw) {
+        if (raw == null) return "";
+        String clean = raw.replace('\r', ' ').replace('\n', ' ').trim();
+        if (clean.length() > MAX_VALUE) clean = clean.substring(0, MAX_VALUE);
+        return clean;
+    }
+
+    /**
+     * Nombre de cabecera a partir de una opción de lista (#EXTVLCOPT:http-user-agent,
+     * parámetros detrás de "|", stream_headers...). Devuelve "" cuando la opción no
+     * es una cabecera HTTP (por ejemplo ":network-caching").
+     */
+    static String optionName(String raw) {
+        String name = trim(raw);
+        if (name.length() == 0) return "";
+        String low = name.toLowerCase(Locale.US);
+        boolean httpPrefix = low.startsWith("http-") || low.startsWith("http_");
+        if (httpPrefix) {
+            name = name.substring(5);
+            low = name.toLowerCase(Locale.US);
+        } else if (!isKnownHeader(low)) {
+            return "";
+        }
+        if (low.equals("ua") || low.equals("useragent")) return "User-Agent";
+        if (low.equals("referer") || low.equals("referrer")) return "Referer";
+        return canonical(name);
+    }
+
+    private static boolean isKnownHeader(String low) {
+        return low.equals("user-agent") || low.equals("useragent") || low.equals("ua")
+                || low.equals("referer") || low.equals("referrer") || low.equals("origin")
+                || low.equals("cookie") || low.equals("authorization") || low.startsWith("x-");
+    }
+
+    /** Añade (o reemplaza) una cabecera; ignora nombres o valores no utilizables. */
+    static void put(Map<String, String> map, String name, String value) {
+        if (map == null) return;
+        String key = canonical(name);
+        if (key.length() == 0) return;
+        String clean = value(value);
+        if (clean.length() == 0) {
+            map.remove(key);
+            return;
+        }
+        map.put(key, clean);
+    }
+
+    /**
+     * Junta las cabeceras generales con las del canal. Las del canal MANDAN: si la
+     * lista indica su propio User-Agent, Referer, Origin o Cookie, se usa el suyo
+     * y no el general.
+     */
+    static Map<String, String> merge(Map<String, String> general, Map<String, String> own) {
+        Map<String, String> out = new TreeMap<String, String>();
+        copyInto(out, general);
+        copyInto(out, own);
+        return out;
+    }
+
+    private static void copyInto(Map<String, String> target, Map<String, String> source) {
+        if (target == null || source == null) return;
+        for (Map.Entry<String, String> entry : source.entrySet()) {
+            if (entry == null) continue;
+            put(target, entry.getKey(), entry.getValue());
+        }
+    }
+
+    /** true si el nombre corresponde a un dato que no debe mostrarse completo. */
+    static boolean sensitive(String name) {
+        String low = name == null ? "" : name.toLowerCase(Locale.US);
+        return low.indexOf("cookie") >= 0 || low.indexOf("authorization") >= 0
+                || low.indexOf("token") >= 0 || low.indexOf("key") >= 0
+                || low.indexOf("secret") >= 0 || low.indexOf("password") >= 0
+                || low.indexOf("session") >= 0 || low.indexOf("auth") >= 0;
+    }
+
+    /** Texto de un valor para el diagnóstico: los datos sensibles van ocultos. */
+    static String maskedValue(String name, String value) {
+        if (value == null || value.length() == 0) return "(vacío)";
+        if (sensitive(name)) return "(oculto, " + value.length() + " caracteres)";
+        return shorten(value);
+    }
+
+    /** Valor corto y sin la parte de la dirección que puede llevar tokens. */
+    static String shorten(String value) {
+        if (value == null) return "";
+        String clean = value.trim();
+        int query = clean.indexOf('?');
+        if (query > 0 && clean.indexOf("://") >= 0) clean = clean.substring(0, query);
+        if (clean.length() <= 90) return clean;
+        return clean.substring(0, 70) + "…" + clean.substring(clean.length() - 12);
+    }
+
+    /**
+     * Descripción de las cabeceras para la pantalla DIAGNÓSTICO y los avisos:
+     * dice cuáles se envían y oculta cookies, tokens y claves.
+     */
+    static String describe(Map<String, String> headers) {
+        if (headers == null || headers.isEmpty()) return "(sin cabeceras propias)";
+        StringBuilder sb = new StringBuilder();
+        String userAgent = headers.get("User-Agent");
+        String referer = headers.get("Referer");
+        sb.append("User-Agent=").append(userAgent == null || userAgent.length() == 0
+                ? "(por defecto)" : shorten(userAgent));
+        if (referer != null && referer.length() > 0) {
+            sb.append(" · Referer=").append(shorten(referer));
+        } else {
+            sb.append(" · sin Referer");
+        }
+        for (Map.Entry<String, String> entry : headers.entrySet()) {
+            if (entry == null) continue;
+            String name = entry.getKey();
+            if (name == null) continue;
+            if ("User-Agent".equalsIgnoreCase(name) || "Referer".equalsIgnoreCase(name)) continue;
+            sb.append(" · ").append(name).append('=').append(maskedValue(name, entry.getValue()));
+        }
+        return sb.toString();
+    }
+
+    /** Nombres de las cabeceras que trae el canal (para el diagnóstico). */
+    static String names(Map<String, String> headers) {
+        if (headers == null || headers.isEmpty()) return "(ninguna)";
+        StringBuilder sb = new StringBuilder();
+        for (Map.Entry<String, String> entry : headers.entrySet()) {
+            if (entry == null || entry.getKey() == null) continue;
+            if (sb.length() > 0) sb.append(", ");
+            sb.append(entry.getKey());
+        }
+        return sb.toString();
+    }
+
+    /**
+     * Texto para llevar las cabeceras del canal de una pantalla a otra sin
+     * formularios: una por línea, "Nombre: valor".
+     */
+    static String toSpec(Map<String, String> headers) {
+        if (headers == null || headers.isEmpty()) return "";
+        StringBuilder sb = new StringBuilder();
+        for (Map.Entry<String, String> entry : headers.entrySet()) {
+            if (entry == null) continue;
+            String name = canonical(entry.getKey());
+            String value = value(entry.getValue());
+            if (name.length() == 0 || value.length() == 0) continue;
+            sb.append(name).append(": ").append(value).append('\n');
+        }
+        return sb.toString();
+    }
+
+    /** Cabeceras recibidas desde otra pantalla. Nunca lanza excepción. */
+    static Map<String, String> fromSpec(String spec) {
+        Map<String, String> out = new TreeMap<String, String>();
+        if (spec == null || spec.length() == 0) return out;
+        String[] lines = spec.split("\n");
+        for (int i = 0; i < lines.length; i++) {
+            String line = trim(lines[i]);
+            if (line.length() == 0) continue;
+            int cut = line.indexOf(':');
+            if (cut <= 0) continue;
+            put(out, line.substring(0, cut), line.substring(cut + 1));
+        }
+        return out;
+    }
+
+    /** Copia ordenada y segura de un mapa de cabeceras (nunca null). */
+    static Map<String, String> copy(Map<String, String> source) {
+        Map<String, String> out = new TreeMap<String, String>();
+        copyInto(out, source);
+        return out;
+    }
+
+    /**
+     * Cabeceras que se envían de verdad al pedir el vídeo: TODAS las del canal
+     * (User-Agent, Referer, Origin, Cookie, Authorization y las propias del
+     * proveedor) menos las de control, que pone la propia conexión.
+     *
+     * Así el puente local repite exactamente las mismas cabeceras que el canal
+     * necesita, también en cada trozo de un canal HLS, y no solo dos.
+     */
+    static Map<String, String> forRequest(Map<String, String> headers) {
+        Map<String, String> out = new TreeMap<String, String>();
+        if (headers == null) return out;
+        for (Map.Entry<String, String> entry : headers.entrySet()) {
+            if (entry == null) continue;
+            String name = canonical(entry.getKey());
+            if (name.length() == 0) continue;
+            if (!allowedOnRequest(name)) continue;
+            String clean = value(entry.getValue());
+            if (clean.length() == 0) continue;
+            out.put(name, clean);
+        }
+        return out;
+    }
+
+    /**
+     * Cabeceras que NO se copian tal cual: las calcula la conexión (Host,
+     * Content-Length...), las controla el puente (Range, Accept-Encoding) o, si se
+     * repiten mal, romperían la petición. Enviarlas equivaldría a inventar datos.
+     */
+    static boolean allowedOnRequest(String name) {
+        String low = name == null ? "" : name.toLowerCase(Locale.US);
+        return !(low.equals("host") || low.equals("connection") || low.equals("keep-alive")
+                || low.equals("transfer-encoding") || low.equals("content-length")
+                || low.equals("content-type") || low.equals("content-encoding")
+                || low.equals("accept-encoding") || low.equals("range")
+                || low.equals("te") || low.equals("trailer") || low.equals("upgrade")
+                || low.equals("proxy-connection") || low.equals("expect")
+                || low.equals("accept") || low.equals("if-range")
+                || low.equals("if-modified-since") || low.equals("if-none-match"));
+    }
+}
+<<<<<< FIN: src/main/java/com/pocketbuilder/app_wslenytv1792177359057/Headers.java >>>>>>
+
+
+FIN DE LA PARTE 8 (3 archivos). Continua en la parte 9.

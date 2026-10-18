@@ -1,0 +1,418 @@
+LENY TV 1.55 — PARTE 41 DE LA EXPORTACION DEL CODIGO FUENTE
+===========================================================
+Contenido LITERAL. Continuacion de PlayerActivity.java (se pega JUSTO DETRAS de
+la parte 40, sin repetir lineas).
+Ruta original: src/main/java/com/pocketbuilder/app_wslenytv1792177359057/PlayerActivity.java
+
+
+<<<<<< CONTINUACION: src/main/java/com/pocketbuilder/app_wslenytv1792177359057/PlayerActivity.java >>>>>>
+    /**
+     * Cabeceras con las que abrir el canal.
+     *
+     * Se juntan las generales de la app con TODAS las que la propia lista indica
+     * en el bloque del canal (#EXTVLCOPT, #KODIPROP, #EXTHTTP y los parámetros
+     * detrás de "|"): User-Agent, Referer, Origin, Cookie y las que sean. Las del
+     * canal MANDAN sobre las generales, y llegan antes del primer intento.
+     */
+    private Map<String, String> channelHeaders(Channel channel) {
+        Map<String, String> general = AppPrefs.headers(this);
+        Map<String, String> own = channel == null ? null : channel.headers;
+        return Headers.merge(general, own);
+    }
+
+    /**
+     * Se llama si el reproductor no ha empezado a dar imagen en PREPARE_TIMEOUT_MS:
+     * se anota el motivo, se prueba el modo compatible y, si tampoco, se explica en
+     * pantalla. Antes de este vigilante la pantalla podía quedarse cargando sin fin.
+     */
+    private void onPrepareTimeout() {
+        if (prepared || player == null) return;
+        if (watchdogAttempt != attemptToken) return;
+        final Channel channel = currentChannel();
+        Diag.add("Reproductor · SIN IMAGEN tras " + (PREPARE_TIMEOUT_MS / 1000L) + " s · " + attemptLabel()
+                + " · canal " + channel.name + " · " + Diag.channelUrl(channel.url)
+                + " (el servidor aceptó la conexión pero no envió datos)");
+        Diag.save(this);
+        setBuffering(false);
+        if (retryWithProxy(channel, "no llegó imagen en " + (PREPARE_TIMEOUT_MS / 1000L) + " s")) return;
+        EngineInfo.rawError("reproductor de Android · sin imagen en "
+                + (PREPARE_TIMEOUT_MS / 1000L) + " s (no hubo código de error)");
+        showMessage("El canal no responde",
+                "Han pasado " + (PREPARE_TIMEOUT_MS / 1000L) + " segundos y el servidor no ha empezado a"
+                        + " enviar imagen.\n\n" + playbackHints(), true);
+        askServerForReason(channel);
+    }
+
+    /**
+     * Segundo intento usando el puente local: repite la petición con las cabeceras
+     * puestas y sigue las redirecciones, también en cada trozo de un canal HLS.
+     * Devuelve true si se ha vuelto a lanzar la reproducción.
+     */
+    private boolean retryWithProxy(Channel channel, String reason) {
+        if (proxyAttempted || !LocalProxy.isHttp(playbackUrl(channel))) {
+            Diag.add("Reproductor · no se reintenta con el puente local (" + reason + "): "
+                    + (proxyAttempted ? "ya se intentó antes" : "el enlace no es HTTP ni HTTPS")
+                    + " · " + attemptLabel());
+            Diag.save(this);
+            return false;
+        }
+        proxyAttempted = true;
+        useProxy = true;
+        Diag.add("Reproductor · segundo intento con el puente local (" + reason + ") · "
+                + Diag.channelUrl(channel.url));
+        toast("Reintentando con el modo compatible…");
+        startPlayback();
+        return true;
+    }
+
+    // ------------------------------------------------------------------ DASH
+
+    /**
+     * Abre un canal DASH con el motor DASH interno: lee el manifiesto .mpd, elige
+     * la calidad y va pidiendo los trozos del canal. Si el manifiesto lleva el
+     * audio en una pista aparte, el motor une las dos pistas antes de reproducir.
+     */
+    private void startDash(Channel channel) {
+        attemptToken++;
+        ui.removeCallbacks(prepareWatchdog);
+        hideMessage();
+        currentType = FormatDetector.DASH;
+        updateTopBar();
+        Map<String, String> headers = channelHeaders(channel);
+        Diag.add("Reproductor · motor DASH interno · canal " + channel.name + " · " + Diag.channelUrl(channel.url));
+        Diag.add("Reproductor · cabeceras enviadas al manifiesto, a los datos iniciales y a cada trozo: "
+                + Net.describeHeaders(headers));
+        EngineInfo.headers(Headers.describe(headers) + (channel.hasOwnHeaders()
+                ? " · del bloque del canal (" + channel.blockSummary() + ")" : ""));
+        EngineInfo.attempt("motor DASH interno de LENY TV (no es ExoPlayer)", currentType,
+                Diag.channelUrl(channel.url));
+        DashPlayer engine = dash;
+        if (engine == null) {
+            engine = new DashPlayer(this, ui, dashListener);
+            dash = engine;
+        }
+        engine.setSurface(surface);
+        setBuffering(true);
+        playing = true;
+        updatePlayButton();
+        ui.removeCallbacks(timeTick);
+        ui.postDelayed(timeTick, 1000);
+        // La resolución pedida en CALIDAD antes de arrancar el motor viaja con el
+        // arranque: así el primer trozo ya sale con esa calidad.
+        engine.start(channel.url, headers, preferredDashQuality);
+        preferredDashQuality = -1;
+    }
+
+    private final DashPlayer.Listener dashListener = new DashPlayer.Listener() {
+        @Override
+        public void onStatus(String message) {
+            Diag.add(message);
+        }
+
+        @Override
+        public void onBuffering(final boolean active) {
+            ui.post(new Runnable() {
+                @Override
+                public void run() {
+                    setBuffering(active);
+                }
+            });
+        }
+
+        @Override
+        public void onVideoSize(final int width, final int height) {
+            ui.post(new Runnable() {
+                @Override
+                public void run() {
+                    videoWidth = width;
+                    videoHeight = height;
+                    applyAspect();
+                    updateTopBar();
+                    playing = true;
+                    updatePlayButton();
+                }
+            });
+        }
+
+        @Override
+        public void onError(final String title, final String body, final boolean retryable) {
+            ui.post(new Runnable() {
+                @Override
+                public void run() {
+                    onDashError(title, body, retryable);
+                }
+            });
+        }
+
+        @Override
+        public void onFinished() {
+            ui.post(new Runnable() {
+                @Override
+                public void run() {
+                    playing = false;
+                    finished = true;
+                    setControlsVisible(true);
+                    updatePlayButton();
+                    if (timeView != null) timeView.setText("FIN");
+                }
+            });
+        }
+    };
+
+    /** El motor DASH no pudo seguir: se explica el motivo y se prueba el sistema. */
+    private void onDashError(String title, String body, boolean retryable) {
+        Diag.add("Reproductor · motor DASH sin poder continuar: " + title);
+        Diag.save(this);
+        setBuffering(false);
+        DashPlayer engine = dash;
+        if (engine != null) {
+            dash = null;
+            try {
+                engine.release();
+            } catch (Throwable ignored) {
+            }
+        }
+        // El manifiesto .mpd ya NO se entrega al reproductor del sistema: Android no
+        // sabe leer DASH y ese paso solo devolvía el código genérico -2147483648,
+        // tapando el motivo real que el motor DASH ya había averiguado.
+        playing = false;
+        updatePlayButton();
+        EngineInfo.dash(title + " · " + body);
+        EngineInfo.rawError("motor DASH · " + title + " · " + body);
+        showMessage(title, body + "\n\n" + playbackHints(), retryable);
+    }
+
+    private void releaseDash() {
+        DashPlayer engine = dash;
+        dash = null;
+        if (engine != null) {
+            try {
+                engine.release();
+            } catch (Throwable ignored) {
+            }
+        }
+    }
+
+    /** Menú CALIDAD cuando el canal se reproduce con el motor DASH. */
+    private void openDashQualityPanel() {
+        final DashPlayer engine = dash;
+        if (engine == null || engine.qualityCount() == 0) {
+            showMessage("Calidad", "El manifiesto DASH todavía no ha entregado sus calidades."
+                    + " Espera unos segundos a que empiece la reproducción y vuelve a intentarlo.", false);
+            return;
+        }
+        if (engine.hasSingleQuality()) {
+            showMessage("Calidad", engine.singleQualityMessage(), false);
+            return;
+        }
+        int count = engine.qualityCount();
+        String[] labels = new String[count];
+        for (int i = 0; i < count; i++) labels[i] = engine.qualityLabel(i);
+        showChoicePanel("CALIDAD DEL CANAL DASH", labels, engine.qualityIndex(), new ChoiceListener() {
+            @Override
+            public void onChoice(int position) {
+                closeChoice();
+                if (position < 0 || position >= engine.qualityCount()) return;
+                String label = engine.qualityLabel(position);
+                String qualityNote = engine.setQuality(position);
+                label = engine.qualityLabel(engine.qualityIndex());
+                if (qualityNote != null && qualityNote.length() > 0) {
+                    showMessage("Calidad", qualityNote, false);
+                }
+                setBuffering(true);
+                toast("Calidad: " + label);
+            }
+        });
+    }
+
+    private void releasePlayer() {
+        releaseDash();
+        ui.removeCallbacks(timeTick);
+        ui.removeCallbacks(prepareWatchdog);
+        watchdogAttempt = -1;
+        MediaPlayer current = player;
+        player = null;
+        prepared = false;
+        playing = false;
+        if (current != null) {
+            try {
+                current.setOnPreparedListener(null);
+                current.setOnCompletionListener(null);
+                current.setOnErrorListener(null);
+                current.setOnInfoListener(null);
+                current.setOnVideoSizeChangedListener(null);
+            } catch (Exception ignored) {
+            }
+            try {
+                current.reset();
+            } catch (Exception ignored) {
+            }
+            try {
+                current.release();
+            } catch (Exception ignored) {
+            }
+        }
+    }
+
+    private void restartPlayback() {
+        startPlayback();
+    }
+
+    private void togglePlay() {
+        if (dash != null) {
+            playing = !playing;
+            dash.setPaused(!playing);
+            if (playing) scheduleHide();
+            else setControlsVisible(true);
+            updatePlayButton();
+            return;
+        }
+        if (player == null || !prepared) {
+            startPlayback();
+            return;
+        }
+        try {
+            if (playing) {
+                player.pause();
+                playing = false;
+                setControlsVisible(true);
+            } else {
+                if (finished) {
+                    startPlayback();
+                    return;
+                }
+                player.start();
+                playing = true;
+                scheduleHide();
+                ui.removeCallbacks(timeTick);
+                ui.postDelayed(timeTick, 1000);
+            }
+        } catch (Exception e) {
+            showMessage("No se pudo cambiar el estado de reproducción", describe(e), true);
+        }
+        updatePlayButton();
+    }
+
+    private void updatePlayButton() {
+        if (playButton == null) return;
+        setButtonIcon(playButton, playing ? PlayerIcons.pause(this, 0xFFFFFFFF)
+                : PlayerIcons.play(this, 0xFFFFFFFF));
+        playButton.setContentDescription(playing ? "Pausar" : "Reproducir");
+    }
+
+    private void playIndex(int target) {
+        if (channels.isEmpty()) return;
+        int size = channels.size();
+        if (size == 1) {
+            toast("No hay más entradas en esta lista");
+            return;
+        }
+        index = ((target % size) + size) % size;
+        manualType = "";
+        typeOrigin = "";
+        proxyAttempted = false;
+        useProxy = false;
+        // La calidad elegida era de OTRO canal: se descarta al cambiar de canal.
+        variantUrl = "";
+        variantLabel = "";
+        preferredDashQuality = -1;
+        startPlayback();
+        if (drawerAdapter != null) drawerAdapter.notifyDataSetChanged();
+        toast(Names.display(currentChannel().name));
+    }
+
+    /**
+     * Canal anterior / siguiente dentro del MISMO apartado. Antes la lista que se
+     * movía era la del apartado ya filtrada; ahora el reproductor lleva la lista
+     * completa (para poder cambiar de apartado en el panel), así que el salto se
+     * calcula aquí para que siga pasando canales del apartado en el que estás.
+     */
+    private void stepChannel(int direction) {
+        if (channels.isEmpty() || direction == 0) return;
+        int size = channels.size();
+        if (size == 1) {
+            toast("No hay más entradas en esta lista");
+            return;
+        }
+        String category = currentChannel().category == null ? "" : currentChannel().category.trim();
+        for (int step = 1; step <= size; step++) {
+            int candidate = ((index + direction * step) % size + size) % size;
+            String other = channels.get(candidate).category == null
+                    ? "" : channels.get(candidate).category.trim();
+            if (other.equals(category)) {
+                playIndex(candidate);
+                return;
+            }
+        }
+        playIndex(index + direction);
+    }
+
+    private void updateTopBar() {
+        if (topTitle == null) return;
+        Channel channel = currentChannel();
+        topTitle.setText(Names.forDisplay(topTitle.getPaint(), channel.name));
+        StringBuilder subtitle = new StringBuilder();
+        subtitle.append(channel.category);
+        subtitle.append(" · ");
+        subtitle.append(currentType);
+        String engine = dash == null ? "" : dash.statusLine();
+        if (engine.length() > 0) subtitle.append(" · ").append(engine);
+        else if (videoWidth > 0 && videoHeight > 0) {
+            subtitle.append(" · ").append(videoWidth).append("×").append(videoHeight);
+        }
+        if (channels.size() > 1) {
+            subtitle.append(" · ").append(index + 1).append("/").append(channels.size());
+        }
+        topSubtitle.setText(subtitle.toString());
+        if (drawerCount != null) refreshDrawerFilter();
+    }
+
+    private void updateTime() {
+        if (timeView == null) return;
+        if (dash != null) {
+            String text = dash.timeText();
+            int split = text == null ? -1 : text.indexOf(" / ");
+            if (split > 0) {
+                timeView.setText(text.substring(0, split));
+                if (durationView != null) durationView.setText(text.substring(split + 3));
+            } else if (text != null) {
+                timeView.setText(text);
+            }
+            if (progressBar != null) progressBar.setEnabled(false);
+            return;
+        }
+        if (player == null || !prepared) return;
+        try {
+            int duration = player.getDuration();
+            int position = player.getCurrentPosition();
+            if (position < 0) position = 0;
+            // Fila de tiempos de la captura: transcurrido a la izquierda y duración
+            // a la derecha. En un canal en directo la duración es 0:00:00, igual que
+            // en la referencia.
+            timeView.setText(formatTime(position));
+            if (durationView != null) {
+                durationView.setText(duration > 0 ? formatTime(duration) : "00:00");
+            }
+            if (progressBar != null) {
+                progressBar.setEnabled(duration > 0);
+                if (duration > 0) {
+                    progressBar.setProgress(Math.round(1000f * position / duration));
+                }
+            }
+        } catch (Exception ignored) {
+        }
+    }
+
+    private String formatTime(int millis) {
+        int totalSeconds = millis / 1000;
+        int hours = totalSeconds / 3600;
+        int minutes = (totalSeconds % 3600) / 60;
+        int seconds = totalSeconds % 60;
+        // Formato de la captura: dos cifras siempre (00:06 y 00:00).
+        if (hours > 0) return String.format(Locale.US, "%d:%02d:%02d", hours, minutes, seconds);
+        return String.format(Locale.US, "%02d:%02d", minutes, seconds);
+    }
+
+    private void setBuffering(boolean value) {
+        if (buffering != null) buffering.setVisibility(value ? View.VISIBLE : View.GONE);
+    }

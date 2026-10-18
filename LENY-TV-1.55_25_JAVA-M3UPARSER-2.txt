@@ -1,0 +1,403 @@
+LENY TV 1.55 — CODIGO FUENTE REAL — PARTE 25 (LECTOR DE LISTAS M3U, 2 de 3)
+=========================================================================
+Continuacion LITERAL de src/main/java/com/pocketbuilder/app_wslenytv1792177359057/M3uParser.java
+El archivo completo son las partes 24 + 25 + 26 pegadas en ese orden.
+Esta parte sigue donde acaba la 24 (parse) y llega hasta applyExtinf.
+
+
+<<<<<< ARCHIVO: src/main/java/com/pocketbuilder/app_wslenytv1792177359057/M3uParser.java (PARTE 25 de 3: continuacion) >>>>>>
+
+    /**
+     * Busca en la lista el bloque del canal cuya dirección coincide con la pedida
+     * y devuelve la entrada con sus cabeceras y su licencia ya aplicadas.
+     *
+     * Se usa al abrir un canal desde la cuadrícula: así las cabeceras propias del
+     * canal están disponibles ANTES del primer intento de reproducción y no se
+     * arranca con las cabeceras generales. Recorre el texto una sola vez y solo
+     * guarda el bloque en curso, sin construir la lista entera (es rápido y no
+     * consume memoria aunque la lista tenga miles de canales).
+     *
+     * Devuelve null si no encuentra el bloque o si no trae ningún dato propio.
+     */
+    static Channel lookupBlock(String text, String targetUrl, String baseUrl) {
+        if (text == null || text.length() == 0) return null;
+        String target = trimAll(targetUrl);
+        if (target.length() == 0) return null;
+        Pending pending = new Pending();
+        LineScanner scanner = new LineScanner(text);
+        String raw;
+        while ((raw = scanner.next()) != null) {
+            if (raw.length() > MAX_LINE_LENGTH) raw = raw.substring(0, MAX_LINE_LENGTH);
+            String line = trimAll(raw);
+            if (line.length() == 0) continue;
+            char first = line.charAt(0);
+            if (first == '#') {
+                String upper = line.toUpperCase(Locale.US);
+                if (upper.startsWith("#EXTINF")) {
+                    pending.reset();
+                    pending.open = true;
+                    applyExtinf(pending, line, null);
+                } else if (upper.startsWith("#EXTGRP")) {
+                    String group = valueAfterColon(line);
+                    if (group.length() > 0) pending.group = group;
+                } else if (upper.startsWith("#EXTVLCOPT") || upper.startsWith("#EXTVLC")
+                        || upper.startsWith("#KODIPROP") || upper.startsWith("#EXTHTTP")) {
+                    readHeaderDirective(pending, line, null);
+                }
+                continue;
+            }
+            if (first == '<') continue;
+            String url = readUrlLine(line, pending);
+            if (url.length() == 0 || !looksLikeAddress(url)) {
+                pending.reset();
+                continue;
+            }
+            String resolved = resolve(baseUrl, url);
+            if (target.equals(resolved) || target.equalsIgnoreCase(resolved)) {
+                if (pending.headers.isEmpty() && pending.licenseType.length() == 0
+                        && pending.licenseKey.length() == 0) {
+                    // El bloque no aporta nada: se deja el canal tal y como está.
+                    return null;
+                }
+                String name = pending.name != null && pending.name.length() > 0
+                        ? pending.name : guessName(resolved);
+                return new Channel(name, resolved, pending.logo, pending.group,
+                        pending.headers, pending.headerSources,
+                        pending.licenseType, pending.licenseKey, pending.licenseStreamHeaders);
+            }
+            pending.reset();
+        }
+        return null;
+    }
+
+    /**
+     * true si la línea es una directiva M3U escrita SIN la «#» de delante.
+     *
+     * Solo se acepta cuando detrás del nombre de la directiva viene «:», un
+     * espacio o un «=». Así una dirección normal («extinf.ts», «playlist.m3u8»)
+     * nunca se confunde con una directiva.
+     */
+    private static boolean missingHashDirective(String line) {
+        if (line == null || line.length() == 0) return false;
+        String upper = line.toUpperCase(Locale.US);
+        if (upper.startsWith("EXT-X-")) return true;
+        String[] tokens = {"EXTM3U", "EXTINF", "EXTGRP", "EXTVLCOPT", "EXTVLC", "EXTHTTP", "KODIPROP"};
+        for (int i = 0; i < tokens.length; i++) {
+            String token = tokens[i];
+            if (!upper.startsWith(token)) continue;
+            if (upper.length() == token.length()) return true;
+            char next = upper.charAt(token.length());
+            if (next == ':' || next == ' ' || next == '\t' || next == '=') return true;
+        }
+        return false;
+    }
+
+    /**
+     * Coloca en su apartado las entradas que la lista dejó SIN apartado cuando son
+     * el mismo canal que otra entrada que sí lo trae (mismo nombre).
+     *
+     * Es el caso de una lista donde el canal aparece primero con su
+     * grupo («ESPN 🔴» dentro de ESPN) y luego otra vez con un enlace más y sin
+     * grupo: antes esa segunda entrada se quedaba en «Sin categoría».
+     */
+    private static void adoptGroups(Result result) {
+        if (result == null || result.channels.size() < 2) return;
+        java.util.HashMap<String, String> groups = new java.util.HashMap<String, String>();
+        for (int i = 0; i < result.channels.size(); i++) {
+            Channel channel = result.channels.get(i);
+            String key = nameKey(channel.name);
+            if (key.length() == 0) continue;
+            if (NO_CATEGORY.equals(channel.category)) continue;
+            if (!groups.containsKey(key)) groups.put(key, channel.category);
+        }
+        if (groups.isEmpty()) return;
+        for (int i = 0; i < result.channels.size(); i++) {
+            Channel channel = result.channels.get(i);
+            if (!NO_CATEGORY.equals(channel.category)) continue;
+            String category = groups.get(nameKey(channel.name));
+            if (category == null || category.length() == 0) continue;
+            channel.adoptCategory(category);
+            if (!NO_CATEGORY.equals(channel.category)) result.adoptedGroups++;
+        }
+    }
+
+    /** Nombre comparable: sin destrozo de codificación, en minúsculas y con un solo espacio. */
+    private static String nameKey(String name) {
+        String text = Names.repair(name);
+        if (text.length() == 0) return "";
+        StringBuilder sb = new StringBuilder(text.length());
+        boolean space = false;
+        for (int i = 0; i < text.length(); i++) {
+            char c = text.charAt(i);
+            if (c == ' ' || c == '\t') {
+                if (!space) sb.append(' ');
+                space = true;
+            } else {
+                sb.append(Character.toLowerCase(c));
+                space = false;
+            }
+        }
+        return sb.toString().trim();
+    }
+
+    /**
+     * Procesa la línea de dirección: separa los parámetros detrás de "|", los
+     * convierte en cabeceras del canal y devuelve la dirección limpia.
+     */
+    private static String readUrlLine(String line, Pending pending) {
+        String url = stripQuotes(line);
+        int bar = url.indexOf('|');
+        if (bar >= 0) {
+            String options = url.substring(bar + 1);
+            readHeaderPairs(options, pending, "después de \"|\"");
+            url = trimAll(url.substring(0, bar));
+        }
+        // Alguna lista deja un espacio o un tabulador detrás de la dirección.
+        int space = firstSpace(url);
+        if (space > 0) url = url.substring(0, space);
+        return url;
+    }
+
+    /**
+     * Lee todas las directivas de un bloque (#EXTVLCOPT, #KODIPROP, #EXTHTTP) y
+     * guarda lo que corresponde a cabeceras del canal y a licencia.
+     */
+    private static void readHeaderDirective(Pending pending, String line, Result result) {
+        String upper = line.toUpperCase(Locale.US);
+        if (upper.startsWith("#EXTHTTP")) {
+            if (result != null) result.headerDirectives++;
+            int before = pending.headers.size();
+            readHeaderPairs(directiveBody(line), pending, "#EXTHTTP");
+            if (result != null && pending.headers.size() > before) result.channelAttributes = true;
+            return;
+        }
+        if (upper.startsWith("#KODIPROP")) {
+            if (result != null) result.headerDirectives++;
+            int before = pending.headers.size();
+            readKodiProperty(pending, line);
+            if (result != null && pending.headers.size() > before) result.channelAttributes = true;
+            return;
+        }
+        // #EXTVLCOPT (o #EXTVLC): las opciones de cabecera de VLC.
+        if (result != null) result.headerDirectives++;
+        String[] pair = pairOf(directiveBody(line));
+        if (pair == null) return;
+        String headerName = Headers.optionName(pair[0]);
+        if (headerName.length() == 0) {
+            // Otras opciones de VLC (":network-caching=3000"...) no son cabeceras.
+            return;
+        }
+        pending.putHeader(headerName, decodePercent(pair[1]), "#EXTVLCOPT:" + trimAll(pair[0]));
+        if (result != null) result.channelAttributes = true;
+    }
+
+    /**
+     * Propiedades de #KODIPROP. Las de cabeceras se aplican al canal; las de
+     * licencia se identifican y se guardan, pero NO se usan para descifrar.
+     */
+    private static void readKodiProperty(Pending pending, String line) {
+        String[] pair = pairOf(directiveBody(line));
+        if (pair == null) return;
+        String name = pair[0].toLowerCase(Locale.US);
+        String value = pair[1];
+        if (name.endsWith("stream_headers") || name.endsWith("manifest_headers")) {
+            readHeaderPairs(value, pending, "#KODIPROP:" + trimAll(pair[0]));
+            if (name.endsWith("stream_headers")) {
+                pending.licenseStreamHeaders = clip(value, 200);
+            }
+            return;
+        }
+        if (name.indexOf("license_type") >= 0) {
+            pending.licenseType = trimAll(value);
+            return;
+        }
+        if (name.indexOf("license_key") >= 0) {
+            // Se guarda para poder IDENTIFICAR que el canal está protegido, pero
+            // nunca se muestra ni se envía a ningún sitio: el motor no descifra.
+            pending.licenseKey = trimAll(value);
+            return;
+        }
+        // El resto de propiedades de inputstream.adaptive no se usan.
+    }
+
+    /**
+     * Convierte un trozo de texto con pares nombre=valor en cabeceras del canal.
+     * Admite:
+     *  - "User-Agent=VLC/3.0.18&Referer=https://servidor/"  (o con ";")
+     *  - '{"User-Agent":"VLC/3.0.18","Referer":"https://servidor/"}'
+     *  - "User-Agent: VLC/3.0.18"
+     * Los valores con %XX se decodifican (muchas listas los escapan).
+     */
+    private static void readHeaderPairs(String text, Pending pending, String source) {
+        if (text == null) return;
+        String body = trimAll(text);
+        if (body.length() == 0) return;
+        if (body.indexOf('{') >= 0) {
+            readJsonPairs(body, pending, source);
+            return;
+        }
+        int index = 0;
+        int length = body.length();
+        while (index < length) {
+            while (index < length && isPairSeparator(body.charAt(index))) index++;
+            if (index >= length) break;
+            int start = index;
+            while (index < length && !isPairSeparator(body.charAt(index))) index++;
+            String chunk = trimAll(body.substring(start, index));
+            if (chunk.length() == 0) continue;
+            String[] pair = pairOf(chunk);
+            if (pair == null) continue;
+            String headerName = Headers.optionName(pair[0]);
+            if (headerName.length() == 0) continue;
+            pending.putHeader(headerName, decodePercent(pair[1]), source);
+        }
+    }
+
+    /** Pares "clave":"valor" de un texto con forma de JSON (por ejemplo #EXTHTTP). */
+    private static void readJsonPairs(String text, Pending pending, String source) {
+        int index = 0;
+        int length = text.length();
+        while (index < length) {
+            int keyStart = -1;
+            for (int i = index; i < length; i++) {
+                char c = text.charAt(i);
+                if (c == '"' || c == '\'') {
+                    keyStart = i;
+                    break;
+                }
+            }
+            if (keyStart < 0) return;
+            char keyQuote = text.charAt(keyStart);
+            int keyEnd = text.indexOf(keyQuote, keyStart + 1);
+            if (keyEnd < 0) return;
+            String key = text.substring(keyStart + 1, keyEnd);
+            int separator = -1;
+            for (int i = keyEnd + 1; i < length; i++) {
+                char c = text.charAt(i);
+                if (c == ':' || c == '=') {
+                    separator = i;
+                    break;
+                }
+                if (c == '}' || c == ';' || c == '&') break;
+            }
+            if (separator < 0) {
+                index = keyEnd + 1;
+                continue;
+            }
+            int valueStart = -1;
+            char valueQuote = 0;
+            for (int i = separator + 1; i < length; i++) {
+                char c = text.charAt(i);
+                if (c == '"' || c == '\'') {
+                    valueStart = i;
+                    valueQuote = c;
+                    break;
+                }
+                if (c == ',' || c == '}' || c == ';' || c == '&') break;
+            }
+            if (valueStart < 0) {
+                index = separator + 1;
+                continue;
+            }
+            int valueEnd = text.indexOf(valueQuote, valueStart + 1);
+            if (valueEnd < 0) return;
+            String value = text.substring(valueStart + 1, valueEnd);
+            String headerName = Headers.optionName(key);
+            if (headerName.length() > 0) {
+                pending.putHeader(headerName, decodePercent(value), source);
+            }
+            index = valueEnd + 1;
+        }
+    }
+
+    private static boolean isPairSeparator(char c) {
+        return c == '&' || c == ';' || c == '|' || c == '\n' || c == '\r';
+    }
+
+    /** Decodifica los %XX que usan muchas listas dentro de los valores. */
+    private static String decodePercent(String value) {
+        if (value == null || value.indexOf('%') < 0) return value;
+        StringBuilder sb = new StringBuilder(value.length());
+        for (int i = 0; i < value.length(); i++) {
+            char c = value.charAt(i);
+            if (c == '%' && i + 2 < value.length()) {
+                int high = hexValue(value.charAt(i + 1));
+                int low = hexValue(value.charAt(i + 2));
+                if (high >= 0 && low >= 0) {
+                    sb.append((char) (high * 16 + low));
+                    i += 2;
+                    continue;
+                }
+            }
+            sb.append(c);
+        }
+        return sb.toString();
+    }
+
+    private static int hexValue(char c) {
+        if (c >= '0' && c <= '9') return c - '0';
+        if (c >= 'a' && c <= 'f') return c - 'a' + 10;
+        if (c >= 'A' && c <= 'F') return c - 'A' + 10;
+        return -1;
+    }
+
+    /**
+     * Texto que hay detrás de los dos puntos de una directiva
+     * ("#EXTVLCOPT:http-user-agent=x" → "http-user-agent=x").
+     */
+    private static String directiveBody(String line) {
+        int colon = line.indexOf(':');
+        if (colon < 0 || colon + 1 > line.length()) return "";
+        return trimAll(line.substring(colon + 1));
+    }
+
+    /**
+     * Separa "nombre = valor" (o "nombre: valor") de un trozo de texto.
+     * Devuelve null si no hay un nombre utilizable.
+     */
+    private static String[] pairOf(String text) {
+        String body = trimAll(text);
+        if (body.length() == 0) return null;
+        int equals = body.indexOf('=');
+        int colon = body.indexOf(':');
+        int cut;
+        if (equals >= 0 && (colon < 0 || equals < colon)) cut = equals;
+        else cut = colon;
+        if (cut <= 0) return null;
+        String name = trimAll(body.substring(0, cut));
+        String value = trimAll(body.substring(cut + 1));
+        if (name.length() == 0) return null;
+        return new String[]{name, value};
+    }
+
+    /** Aplica los datos de un #EXTINF al bloque en curso. */
+    private static void applyExtinf(Pending pending, String line, Result result) {
+        if (result != null) {
+            result.extinfCount++;
+            double duration = readDuration(line);
+            if (!Double.isNaN(duration)) {
+                result.numericDurations++;
+                if (duration > 0d) result.positiveDurations++;
+            }
+        }
+        int comma = firstCommaOutsideQuotes(line);
+        String attributeText = comma >= 0 ? line.substring(0, comma) : line;
+        String title = comma >= 0 ? stripQuotes(trimAll(line.substring(comma + 1))) : "";
+        Extinf extinf = readAttributes(attributeText);
+        if (result != null && extinf.anyAttribute) result.channelAttributes = true;
+        if (extinf.name.length() > 0) pending.name = extinf.name;
+        else if (extinf.id.length() > 0 && (pending.name == null || pending.name.length() == 0)) {
+            // Solo si la entrada no da ningún nombre se usa el identificador tvg-id.
+            pending.name = extinf.id;
+        }
+        if (extinf.logo.length() > 0) pending.logo = extinf.logo;
+        if (extinf.group.length() > 0) pending.group = extinf.group;
+        if (title.length() > 0) {
+            pending.name = title;
+            if (result != null) result.namedEntries++;
+        }
+    }
+<<<<<< FIN PARCIAL DE LA PARTE 25: el archivo continua en la PARTE 26 >>>>>>
+
+
+FIN DE LA PARTE 25. El resto de M3uParser.java esta en la parte 26.

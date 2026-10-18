@@ -1,0 +1,707 @@
+LENY TV 1.55 — CODIGO FUENTE REAL — PARTE 10 (CALIDADES Y COMPROBACION DE ARCHIVOS)
+==================================================================================
+Texto LITERAL de 2 archivos Java del proyecto original.
+
+  1. src/main/java/com/pocketbuilder/app_wslenytv1792177359057/StreamQuality.java (14.899 bytes)
+  2. src/main/java/com/pocketbuilder/app_wslenytv1792177359057/StreamCheck.java   (13.249 bytes)
+
+
+<<<<<< ARCHIVO: src/main/java/com/pocketbuilder/app_wslenytv1792177359057/StreamQuality.java >>>>>>
+package com.pocketbuilder.app_wslenytv1792177359057;
+
+import java.io.ByteArrayOutputStream;
+import java.io.InputStream;
+import java.net.HttpURLConnection;
+import java.net.URL;
+import java.util.ArrayList;
+import java.util.Locale;
+import java.util.Map;
+
+/**
+ * Lee el ENLACE de un canal (no lo reproduce) para saber qué calidades ofrece de
+ * verdad, cuando el menú CALIDAD no puede preguntárselo al motor DASH porque ese
+ * canal no está pasando por él.
+ *
+ * Antes, un canal que no usaba el motor DASH solo podía mirar las pistas que
+ * entrega el reproductor de Android, y casi siempre respondía «no ofrece varias
+ * pistas de vídeo seleccionables» aunque el enlace sí tuviera varias calidades.
+ * Ahora se lee el propio enlace:
+ *
+ *  · Manifiesto DASH (.mpd): se usa el lector de manifiestos de la app y se
+ *    devuelve una entrada por cada Representación de VÍDEO que declara.
+ *  · Lista maestra HLS (.m3u8 con #EXT-X-STREAM-INF): se devuelve una entrada por
+ *    cada variante, con su resolución y su velocidad, y la dirección que hay que
+ *    reproducir para verla.
+ *
+ * Es solo lectura: esta clase no descarga vídeo, no reproduce nada y no descifra
+ * ninguna protección. Nunca lanza excepciones hacia la pantalla: si algo falla,
+ * devuelve el motivo escrito para poder mostrarlo.
+ */
+final class StreamQuality {
+
+    /** Primera entrada del menú CALIDAD: la app elige sola la mejor calidad. */
+    static final String AUTOMATIC_LABEL = "Automática (recomendada)";
+
+    /** Una calidad real del enlace. */
+    static final class Option {
+        /** Texto que ve la persona (por ejemplo «720p · 2500 kbps · H.264»). */
+        final String label;
+        /** Dirección que hay que reproducir para esta calidad ("" = la del canal). */
+        final String url;
+        /** Índice de la Representación dentro del manifiesto DASH (-1 si no es DASH). */
+        final int dashIndex;
+        /** true si la calidad viene de un manifiesto DASH. */
+        final boolean dash;
+
+        Option(String label, String url, int dashIndex, boolean dash) {
+            this.label = label;
+            this.url = url == null ? "" : url;
+            this.dashIndex = dashIndex;
+            this.dash = dash;
+        }
+    }
+
+    /** Lo que ofrece el enlace. */
+    static final class Result {
+        /** "DASH", "HLS" o "" cuando el enlace no es un manifiesto reconocible. */
+        final String kind;
+        /** Calidades encontradas (sin contar la opción automática). */
+        final ArrayList<Option> options = new ArrayList<Option>();
+        /** Explicación breve cuando no hay calidades que elegir. */
+        String note = "";
+        /** De dónde salió el enlace: la dirección final tras las redirecciones. */
+        String sourceUrl = "";
+
+        Result(String kind) {
+            this.kind = kind == null ? "" : kind;
+        }
+
+        boolean multiple() {
+            return options.size() >= 2;
+        }
+
+        String kindText() {
+            if ("DASH".equals(kind)) return "manifiesto DASH";
+            if ("HLS".equals(kind)) return "lista HLS";
+            return "este enlace";
+        }
+    }
+
+    private static final int MAX_BYTES = 3 * 1024 * 1024;
+    private static final int MAX_HOPS = 5;
+
+    private StreamQuality() {
+    }
+
+    /** Lee el enlace con las cabeceras del canal. Nunca lanza: explica el motivo. */
+    static Result inspect(String channelUrl, Map<String, String> headers) {
+        Result result = new Result("");
+        if (channelUrl == null || channelUrl.trim().length() == 0) {
+            result.note = "Este canal no tiene un enlace que se pueda leer.";
+            return result;
+        }
+        if (!LocalProxy.isHttp(channelUrl)) {
+            result.note = "Este canal no se abre por Internet (es un archivo del teléfono), así que el"
+                    + " reproductor usa la única pista que contiene.";
+            return result;
+        }
+        Response response;
+        try {
+            response = fetch(channelUrl, headers);
+        } catch (Throwable t) {
+            result.note = "No se pudo leer el enlace del canal para ver sus calidades: "
+                    + explain(t) + ".\\n\\nSe sigue usando la calidad que elige el reproductor.";
+            return result;
+        }
+        result.sourceUrl = response.url;
+        String text = response.text == null ? "" : response.text;
+        String head = text.trim();
+        if (head.startsWith("#EXTM3U")) {
+            Result hls = new Result("HLS");
+            hls.sourceUrl = response.url;
+            parseHls(text, response.url, hls);
+            return hls;
+        }
+        if (looksLikeMpd(text)) {
+            Result dash = new Result("DASH");
+            dash.sourceUrl = response.url;
+            parseDash(text, response.url, dash);
+            return dash;
+        }
+        result.note = "El enlace del canal no es una lista ni un manifiesto con varias calidades"
+                + " (el servidor entrega una sola pista de vídeo), así que el reproductor usa la que hay.";
+        return result;
+    }
+
+    // ------------------------------------------------------------------- DASH
+
+    private static void parseDash(String text, String finalUrl, Result result) {
+        Mpd manifest;
+        try {
+            manifest = Mpd.parse(text, finalUrl);
+        } catch (Throwable t) {
+            result.note = "El enlace parece un manifiesto DASH pero no se pudo interpretar: "
+                    + explain(t) + ".";
+            return;
+        }
+        ArrayList<Mpd.Rep> videos = manifest.videoReps();
+        for (int i = 0; i < videos.size(); i++) {
+            Mpd.Rep rep = videos.get(i);
+            String label = rep.label();
+            if (rep.protectedContent && rep.protectionSystem.length() > 0) {
+                label = label + " · protegido (" + rep.protectionSystem + ")";
+            }
+            result.options.add(new Option(label, "", i, true));
+        }
+        if (result.options.isEmpty()) {
+            result.note = "El manifiesto DASH no declara ninguna pista de vídeo, así que no hay"
+                    + " resoluciones que elegir.";
+        } else if (result.options.size() == 1) {
+            result.note = "Este canal solo ofrece una resolución: " + result.options.get(0).label + ".";
+        }
+        Diag.add("CALIDAD · manifiesto leído para el menú: " + result.options.size()
+                + " resolución(es) · " + manifest.summary());
+    }
+
+    // -------------------------------------------------------------------- HLS
+
+    /**
+     * Lee una lista HLS. Si es una lista MAESTRA (#EXT-X-STREAM-INF) devuelve cada
+     * variante con su resolución y la dirección que hay que reproducir para verla.
+     */
+    private static void parseHls(String text, String finalUrl, Result result) {
+        String[] lines = text.split("\n");
+        int width = 0;
+        int height = 0;
+        int bandwidth = 0;
+        String waitingName = "";
+        boolean expecting = false;
+        for (int i = 0; i < lines.length; i++) {
+            String line = lines[i] == null ? "" : lines[i].trim();
+            if (line.length() == 0) continue;
+            if (line.startsWith("#EXT-X-STREAM-INF:")) {
+                String attrs = line.substring("#EXT-X-STREAM-INF:".length());
+                width = 0;
+                height = 0;
+                bandwidth = 0;
+                waitingName = "";
+                String resolution = attribute(attrs, "RESOLUTION");
+                if (resolution.length() > 0) {
+                    int x = resolution.toLowerCase(Locale.US).indexOf('x');
+                    if (x > 0) {
+                        width = number(resolution.substring(0, x));
+                        height = number(resolution.substring(x + 1));
+                    }
+                }
+                bandwidth = number(attribute(attrs, "BANDWIDTH"));
+                if (bandwidth == 0) bandwidth = number(attribute(attrs, "AVERAGE-BANDWIDTH"));
+                waitingName = attribute(attrs, "NAME");
+                expecting = true;
+                continue;
+            }
+            if (line.startsWith("#")) continue;
+            if (!expecting) continue;
+            expecting = false;
+            String url = Mpd.resolve(finalUrl, line);
+            StringBuilder label = new StringBuilder();
+            if (height > 0) label.append(height).append('p');
+            else if (width > 0) label.append(width).append(" px");
+            else if (waitingName.length() > 0) label.append(waitingName);
+            else label.append("Calidad ").append(result.options.size() + 1);
+            if (bandwidth > 0) {
+                if (label.length() > 0) label.append(" · ");
+                label.append(Math.round(bandwidth / 1000f)).append(" kbps");
+            }
+            result.options.add(new Option(label.toString(), url, -1, false));
+        }
+        if (result.options.isEmpty()) {
+            result.note = "Esta lista HLS es una sola secuencia de vídeo (no es una lista maestra con"
+                    + " varias calidades): el servidor entrega una única calidad.";
+        } else if (result.options.size() == 1) {
+            result.note = "Este canal solo ofrece una calidad: " + result.options.get(0).label + ".";
+        }
+        Diag.add("CALIDAD · lista HLS leída para el menú: " + result.options.size() + " variante(s)");
+    }
+
+    /** Valor de un atributo de una línea #EXT-X-STREAM-INF. */
+    private static String attribute(String attrs, String name) {
+        if (attrs == null) return "";
+        String upper = attrs.toUpperCase(Locale.US);
+        String key = name.toUpperCase(Locale.US);
+        int at = upper.indexOf(key + "=");
+        if (at < 0) return "";
+        int start = at + key.length() + 1;
+        if (start >= attrs.length()) return "";
+        if (attrs.charAt(start) == '"') {
+            int end = attrs.indexOf('"', start + 1);
+            return end > start ? attrs.substring(start + 1, end) : "";
+        }
+        int end = attrs.indexOf(',', start);
+        return end > start ? attrs.substring(start, end).trim() : attrs.substring(start).trim();
+    }
+
+    private static int number(String text) {
+        if (text == null) return 0;
+        StringBuilder digits = new StringBuilder();
+        for (int i = 0; i < text.length(); i++) {
+            char c = text.charAt(i);
+            if (c >= '0' && c <= '9') digits.append(c);
+            else if (digits.length() > 0) break;
+        }
+        if (digits.length() == 0) return 0;
+        try {
+            return Integer.parseInt(digits.toString());
+        } catch (Exception e) {
+            return 0;
+        }
+    }
+
+    private static boolean looksLikeMpd(String text) {
+        if (text == null) return false;
+        String low = text.toLowerCase(Locale.US);
+        return low.indexOf("<mpd") >= 0;
+    }
+
+    // --------------------------------------------------------------- descarga
+
+    private static final class Response {
+        String url;
+        String text;
+    }
+
+    private static Response fetch(String url, Map<String, String> headers) throws Exception {
+        String current = url.trim();
+        for (int hop = 0; hop < MAX_HOPS; hop++) {
+            HttpURLConnection conn = (HttpURLConnection) new URL(current).openConnection();
+            try {
+                conn.setInstanceFollowRedirects(false);
+                conn.setConnectTimeout(15000);
+                conn.setReadTimeout(20000);
+                conn.setRequestProperty("Accept", "*/*");
+                conn.setRequestProperty("Accept-Encoding", "identity");
+                String userAgent = headers == null ? null : headers.get("User-Agent");
+                conn.setRequestProperty("User-Agent",
+                        userAgent == null || userAgent.length() == 0 ? Net.PLAYER_UA : userAgent);
+                if (headers != null) {
+                    for (Map.Entry<String, String> entry : headers.entrySet()) {
+                        if (entry == null) continue;
+                        String name = entry.getKey() == null ? "" : entry.getKey().trim();
+                        String value = entry.getValue();
+                        if (name.length() == 0 || value == null || value.length() == 0) continue;
+                        if ("user-agent".equalsIgnoreCase(name)) continue;
+                        try {
+                            conn.setRequestProperty(name, value);
+                        } catch (Throwable ignored) {
+                            // Una cabecera con nombre inválido no debe impedir la lectura.
+                        }
+                    }
+                }
+                int code = conn.getResponseCode();
+                if (code >= 300 && code < 400) {
+                    String location = conn.getHeaderField("Location");
+                    if (location == null || location.length() == 0) {
+                        throw new MediaErrors.Http(code, "el servidor redirigió sin indicar a dónde");
+                    }
+                    current = Mpd.resolve(current, location);
+                    continue;
+                }
+                if (code < 200 || code >= 400) {
+                    throw new MediaErrors.Http(code, "el servidor respondió con el código " + code);
+                }
+                Response response = new Response();
+                response.url = current;
+                response.text = readAll(conn);
+                return response;
+            } finally {
+                conn.disconnect();
+            }
+        }
+        throw new MediaErrors.Http(0, "el enlace da demasiadas vueltas (demasiadas redirecciones)");
+    }
+
+    private static String readAll(HttpURLConnection conn) throws Exception {
+        InputStream in = conn.getInputStream();
+        try {
+            ByteArrayOutputStream out = new ByteArrayOutputStream();
+            byte[] buffer = new byte[16384];
+            int read;
+            while ((read = in.read(buffer)) > 0) {
+                out.write(buffer, 0, read);
+                if (out.size() > MAX_BYTES) break;
+            }
+            return new String(out.toByteArray(), "UTF-8");
+        } finally {
+            try {
+                in.close();
+            } catch (Throwable ignored) {
+            }
+        }
+    }
+
+    /** Motivo legible de un fallo de lectura. */
+    private static String explain(Throwable t) {
+        if (t instanceof MediaErrors.Http) {
+            MediaErrors.Http http = (MediaErrors.Http) t;
+            return "el servidor respondió con el código " + http.code + " ("
+                    + MediaErrors.httpReason(http.code) + ")";
+        }
+        String message = t == null ? null : t.getMessage();
+        if (message == null || message.length() == 0) {
+            return t == null ? "error desconocido" : t.getClass().getSimpleName();
+        }
+        return message;
+    }
+}
+<<<<<< FIN: src/main/java/com/pocketbuilder/app_wslenytv1792177359057/StreamQuality.java >>>>>>
+
+
+<<<<<< ARCHIVO: src/main/java/com/pocketbuilder/app_wslenytv1792177359057/StreamCheck.java >>>>>>
+package com.pocketbuilder.app_wslenytv1792177359057;
+
+import android.media.MediaCodec;
+import android.media.MediaCodecList;
+import android.media.MediaExtractor;
+import android.media.MediaFormat;
+
+import java.io.File;
+import java.nio.ByteBuffer;
+import java.util.ArrayList;
+import java.util.Locale;
+
+/**
+ * Comprueba por dentro un archivo de vídeo descargado y los decodificadores del
+ * teléfono.
+ *
+ * Es la pieza que convierte un fallo genérico del reproductor de Android
+ * (what=1, extra=-2147483648, que no explica nada) en un motivo real:
+ *
+ *  - Si el archivo llegó vacío, a medias o sin pista de vídeo → trozo incompleto.
+ *  - Qué pistas trae de verdad (vídeo, audio), con qué códec, cuántas muestras y
+ *    cuánto dura cada una → permite ver si el audio y el vídeo coinciden.
+ *  - Si este teléfono tiene un decodificador para ese formato (y cuál) → códec
+ *    incompatible, la causa habitual de que MediaPlayer devuelva un código sin
+ *    detalle cuando el canal usa H.265/HEVC o AV1 y el teléfono no los decodifica.
+ *
+ * Nunca lanza excepciones: si algo falla, devuelve el motivo en texto.
+ */
+final class StreamCheck {
+
+    private static final int MAX_SAMPLES = 20000;
+    private static final String KEY_CODECS = "codecs-string";
+    private static final String KEY_MIME = "mime";
+
+    private StreamCheck() {
+    }
+
+    /** Una pista del archivo (vídeo o audio). */
+    static final class Track {
+        String mime = "";
+        String codec = "";
+        int width;
+        int height;
+        long samples;
+        long durationMs = -1;
+        MediaFormat format;
+
+        boolean isVideo() {
+            return mime.toLowerCase(Locale.US).startsWith("video/");
+        }
+
+        boolean isAudio() {
+            return mime.toLowerCase(Locale.US).startsWith("audio/");
+        }
+
+        String describe() {
+            StringBuilder sb = new StringBuilder();
+            sb.append(mime.length() == 0 ? "(tipo desconocido)" : mime);
+            if (codec.length() > 0) sb.append(" · ").append(codec);
+            if (width > 0) sb.append(" · ").append(width).append('×').append(height);
+            sb.append(" · ").append(samples).append(" muestras");
+            if (durationMs > 0) sb.append(" · ").append(ms(durationMs));
+            return sb.toString();
+        }
+    }
+
+    /** Resultado de mirar un archivo. */
+    static final class Info {
+        final ArrayList<Track> tracks = new ArrayList<Track>();
+        boolean opened;
+        long size;
+        String problem = "";
+
+        Track video() {
+            for (int i = 0; i < tracks.size(); i++) {
+                if (tracks.get(i).isVideo()) return tracks.get(i);
+            }
+            return null;
+        }
+
+        Track audio() {
+            for (int i = 0; i < tracks.size(); i++) {
+                if (tracks.get(i).isAudio()) return tracks.get(i);
+            }
+            return null;
+        }
+
+        boolean hasVideo() {
+            Track v = video();
+            return v != null && v.samples > 0;
+        }
+
+        boolean hasAudio() {
+            Track a = audio();
+            return a != null && a.samples > 0;
+        }
+
+        /** true si el archivo se abrió pero no trae imagen utilizable. */
+        boolean emptyVideo() {
+            return opened && !hasVideo();
+        }
+
+        String describe() {
+            if (!opened) {
+                return problem.length() == 0 ? "no se pudo abrir" : problem;
+            }
+            StringBuilder sb = new StringBuilder();
+            Track v = video();
+            Track a = audio();
+            sb.append(v == null ? "sin pista de vídeo" : "vídeo " + v.describe());
+            sb.append(" · ");
+            sb.append(a == null ? "sin pista de audio" : "audio " + a.describe());
+            if (tracks.size() > 2) sb.append(" · ").append(tracks.size()).append(" pistas en total");
+            return sb.toString();
+        }
+
+        /** Motivo corto cuando el archivo no sirve. */
+        String problemText() {
+            if (!opened) {
+                return problem.length() == 0 ? "el reproductor de Android no pudo abrir el archivo"
+                        : problem;
+            }
+            if (!hasVideo()) {
+                Track v = video();
+                if (v == null) return "el archivo no trae ninguna pista de vídeo (" + describe() + ")";
+                return "la pista de vídeo no trae ni un cuadro (" + v.describe() + ")";
+            }
+            return "";
+        }
+    }
+
+    /**
+     * Mira un archivo descargado. Devuelve siempre un resultado (nunca lanza).
+     * Si el archivo es un trozo suelto de DASH ya unido a sus datos iniciales, se
+     * leen sus pistas igual que si fuera un archivo completo.
+     */
+    static Info inspect(File file) {
+        Info info = new Info();
+        MediaExtractor extractor = null;
+        try {
+            if (file == null || !file.exists()) {
+                info.problem = "el archivo no existe";
+                return info;
+            }
+            info.size = file.length();
+            if (info.size <= 0) {
+                info.problem = "el archivo llegó vacío (0 bytes)";
+                return info;
+            }
+            extractor = new MediaExtractor();
+            extractor.setDataSource(file.getAbsolutePath());
+            int count = extractor.getTrackCount();
+            if (count <= 0) {
+                info.problem = "el archivo no contiene ninguna pista";
+                return info;
+            }
+            ByteBuffer buffer = ByteBuffer.allocate(2 * 1024 * 1024);
+            for (int i = 0; i < count; i++) {
+                MediaFormat format = null;
+                try {
+                    format = extractor.getTrackFormat(i);
+                } catch (Throwable ignored) {
+                }
+                if (format == null) continue;
+                Track track = new Track();
+                track.format = format;
+                track.mime = string(format, KEY_MIME);
+                if (track.mime.length() == 0) track.mime = string(format, MediaFormat.KEY_MIME);
+                track.codec = string(format, KEY_CODECS);
+                track.width = integer(format, MediaFormat.KEY_WIDTH, 0);
+                track.height = integer(format, MediaFormat.KEY_HEIGHT, 0);
+                long durationUs = longValue(format, MediaFormat.KEY_DURATION, 0);
+                if (durationUs > 0) track.durationMs = durationUs / 1000;
+                countSamples(extractor, i, buffer, track);
+                info.tracks.add(track);
+            }
+            info.opened = true;
+        } catch (Throwable t) {
+            info.problem = "el reproductor de Android no pudo abrir el archivo (" + Net.describe(t) + ")";
+        } finally {
+            if (extractor != null) {
+                try {
+                    extractor.release();
+                } catch (Throwable ignored) {
+                }
+            }
+        }
+        return info;
+    }
+
+    /** Cuenta las muestras reales de una pista (para detectar trozos a medias). */
+    private static void countSamples(MediaExtractor extractor, int index, ByteBuffer buffer, Track track) {
+        try {
+            extractor.selectTrack(index);
+            long first = -1;
+            long last = -1;
+            long samples = 0;
+            while (samples < MAX_SAMPLES && extractor.readSampleData(buffer, 0) >= 0) {
+                long time = extractor.getSampleTime();
+                if (first < 0) first = time;
+                last = time;
+                samples++;
+                if (!extractor.advance()) break;
+            }
+            track.samples = samples;
+            if (first >= 0 && last >= first) track.durationMs = (last - first) / 1000;
+            extractor.unselectTrack(index);
+        } catch (Throwable t) {
+            // Se deja samples=0: significa "no se pudo leer nada de esta pista".
+        }
+    }
+
+    /**
+     * Nombre del decodificador que usaría este teléfono para ese formato, o cadena
+     * vacía si no tiene ninguno. Es la comprobación que distingue "el enlace está
+     * bien pero este teléfono no puede con el códec".
+     */
+    static String decoderName(MediaFormat format) {
+        if (format == null) return "";
+        String mime = string(format, KEY_MIME);
+        if (mime.length() == 0) return "";
+        try {
+            MediaCodecList list = new MediaCodecList(MediaCodecList.REGULAR_CODECS);
+            String name = list.findDecoderForFormat(format);
+            if (name != null && name.length() > 0) return name;
+        } catch (Throwable ignored) {
+        }
+        try {
+            MediaCodec codec = MediaCodec.createDecoderByType(mime);
+            if (codec != null) {
+                String name = codec.getName();
+                codec.release();
+                if (name != null) return name;
+            }
+        } catch (Throwable ignored) {
+        }
+        return "";
+    }
+
+    /** true si el teléfono puede decodificar ese formato. */
+    static boolean canDecode(MediaFormat format) {
+        return decoderName(format).length() > 0;
+    }
+
+    /** Explicación legible del decodificador: cuál es o por qué no hay. */
+    static String decoderNote(MediaFormat format) {
+        if (format == null) return "no se pudo leer el formato de la pista";
+        String mime = string(format, KEY_MIME);
+        if (mime.length() == 0) return "la pista no declara su tipo de contenido";
+        String name = decoderName(format);
+        if (name.length() == 0) {
+            return "este teléfono no tiene ningún decodificador para " + mime
+                    + " (el códec del canal no es compatible con el aparato)";
+        }
+        return mime + " con " + name + softwareNote(name);
+    }
+
+    /** " (por software)" / " (por hardware)" a partir del nombre del decodificador. */
+    static String softwareNote(String codecName) {
+        if (codecName == null || codecName.length() == 0) return "";
+        String low = codecName.toLowerCase(Locale.US);
+        if (low.indexOf("google") >= 0 || low.indexOf("c2.android") >= 0
+                || low.indexOf(".sw.") >= 0 || low.indexOf("swdec") >= 0) {
+            return " (por software: más lento)";
+        }
+        return " (por hardware)";
+    }
+
+    /**
+     * Formato aproximado a partir de lo que dice el manifiesto (mimeType y codecs),
+     * para comprobar ANTES de descargar si el teléfono tiene decodificador.
+     * La comprobación definitiva se hace con el formato real del trozo descargado.
+     */
+    static MediaFormat formatFor(String mimeType, String codecs) {
+        String type = mimeType == null ? "" : mimeType.trim().toLowerCase(Locale.US);
+        if (type.length() == 0) type = guessMime(codecs);
+        MediaFormat format = new MediaFormat();
+        format.setString(KEY_MIME, type);
+        if (codecs != null && codecs.trim().length() > 0) {
+            try {
+                format.setString(KEY_CODECS, codecs.trim());
+            } catch (Throwable ignored) {
+            }
+        }
+        return format;
+    }
+
+    private static String guessMime(String codecs) {
+        String low = codecs == null ? "" : codecs.toLowerCase(Locale.US);
+        if (low.indexOf("mp4a") >= 0 || low.indexOf("ac-3") >= 0 || low.indexOf("ec-3") >= 0) {
+            return "audio/mp4";
+        }
+        if (low.indexOf("opus") >= 0) return "audio/opus";
+        if (low.indexOf("vorbis") >= 0) return "audio/vorbis";
+        if (low.indexOf("vp09") >= 0 || low.indexOf("vp08") >= 0) return "video/webm";
+        return "video/mp4";
+    }
+
+    /** Resumen corto de un tipo MIME con sus códecs, para los mensajes. */
+    static String formatName(String mimeType, String codecs) {
+        String mime = mimeType == null || mimeType.length() == 0 ? "(sin tipo)" : mimeType;
+        if (codecs == null || codecs.length() == 0) return mime;
+        return mime + " · " + codecs;
+    }
+
+    /** Convierte milisegundos en un texto corto (1,2 s / 2:05). */
+    static String ms(long millis) {
+        if (millis <= 0) return "0 s";
+        if (millis < 10000) {
+            return String.format(Locale.US, "%.1f s", millis / 1000f).replace('.', ',');
+        }
+        long seconds = millis / 1000;
+        long minutes = seconds / 60;
+        long rest = seconds % 60;
+        if (minutes > 0) return String.format(Locale.US, "%d:%02d min", minutes, rest);
+        return seconds + " s";
+    }
+
+    private static String string(MediaFormat format, String key) {
+        try {
+            String value = format.getString(key);
+            return value == null ? "" : value.trim();
+        } catch (Throwable t) {
+            return "";
+        }
+    }
+
+    private static int integer(MediaFormat format, String key, int fallback) {
+        try {
+            if (!format.containsKey(key)) return fallback;
+            return format.getInteger(key);
+        } catch (Throwable t) {
+            return fallback;
+        }
+    }
+
+    private static long longValue(MediaFormat format, String key, long fallback) {
+        try {
+            if (!format.containsKey(key)) return fallback;
+            return format.getLong(key);
+        } catch (Throwable t) {
+            return fallback;
+        }
+    }
+}
+<<<<<< FIN: src/main/java/com/pocketbuilder/app_wslenytv1792177359057/StreamCheck.java >>>>>>
+
+
+FIN DE LA PARTE 10 (2 archivos). Continua en la parte 11.

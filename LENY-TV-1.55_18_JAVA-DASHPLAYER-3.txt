@@ -1,0 +1,329 @@
+LENY TV 1.55 — CODIGO FUENTE REAL — PARTE 18 (MOTOR DASH, 3 de 4)
+================================================================
+Continuacion LITERAL de src/main/java/com/pocketbuilder/app_wslenytv1792177359057/DashPlayer.java
+El archivo completo son las partes 16 + 17 + 18 + 19 pegadas en ese orden.
+Esta parte sigue donde acaba la 17 (startTimeMs) y llega hasta startSingleFile.
+
+
+<<<<<< ARCHIVO: src/main/java/com/pocketbuilder/app_wslenytv1792177359057/DashPlayer.java (PARTE 18 de 4: continuacion) >>>>>>
+
+    /** Descarga un trozo de vídeo (y su audio) y devuelve el archivo reproducible. */
+    private Piece buildPiece(long number, long time) throws IOException {
+        Mpd.Rep video = selectedVideo;
+        String videoUrl = urlFor(video, number, time);
+        if (videoUrl == null) throw new IOException("no hay dirección para el trozo " + number + " de vídeo");
+        byte[] init = initBytes(video, true);
+        File videoFile = new File(cacheDir, "v_" + number + ".mp4");
+        stage = "trozo de vídeo " + number;
+        download(videoUrl, init, videoFile);
+
+        // Se mira por dentro el trozo recién descargado. Si llegó a medias o sin
+        // imagen no se le entrega al reproductor (que solo diría un código sin
+        // detalle): se vuelve a pedir una vez y, si sigue mal, se descarta.
+        StreamCheck.Info info = StreamCheck.inspect(videoFile);
+        if (!info.hasVideo()) {
+            Diag.add("DASH · el trozo " + number + " no sirve (" + info.problemText()
+                    + "); se vuelve a pedir · " + httpHistory());
+            deleteQuietly(videoFile);
+            download(videoUrl, init, videoFile);
+            info = StreamCheck.inspect(videoFile);
+            if (!info.hasVideo()) {
+                String reason = info.problemText() + " · recibido " + Net.readable((int) info.size);
+                deleteQuietly(videoFile);
+                throw new BadSegment(number, reason, "resultados del servidor: " + httpHistory());
+            }
+        }
+        lastCheckNote = info.describe();
+
+        // ¿Este teléfono sabe decodificar el vídeo de este trozo? Es la comprobación
+        // que distingue "el canal está bien pero el aparato no puede con el códec".
+        if (!codecChecked) {
+            codecChecked = true;
+            StreamCheck.Track videoTrack = info.video();
+            if (!StreamCheck.canDecode(videoTrack.format)) {
+                int alternative = alternativeQuality(videoTrack);
+                if (alternative >= 0) {
+                    String failed = qualityIndex >= 0 && qualityIndex < videoReps.size()
+                            ? videoReps.get(qualityIndex).label() : "la elegida";
+                    Diag.add("DASH · este teléfono no puede decodificar la calidad elegida ("
+                            + StreamCheck.decoderNote(videoTrack.format) + "): se cambia a la calidad "
+                            + videoReps.get(alternative).label());
+                    deleteQuietly(videoFile);
+                    requestedQuality = alternative;
+                    qualityIndex = alternative;
+                    manualQuality = false;
+                    qualityFallback = "no se pudo usar " + failed + " · se usa "
+                            + videoReps.get(alternative).label();
+                    qualityNotice = "Tu teléfono no puede decodificar " + failed
+                            + "; LENY TV sigue con " + videoReps.get(alternative).label() + ".";
+                    codecChecked = false;
+                    throw new RestartSignal();
+                }
+                String list = qualitySummary(videoReps);
+                deleteQuietly(videoFile);
+                throw new FatalError("El teléfono no puede decodificar este canal",
+                        "El enlace y el manifiesto están bien, pero este teléfono no puede reproducir"
+                                + " el vídeo del canal.\n\nComprobación real del decodificador: "
+                                + StreamCheck.decoderNote(videoTrack.format) + ".\n"
+                                + "Calidades del manifiesto: " + list + ".\n\n"
+                                + "El límite está en el aparato: no tiene decodificador para ese códec"
+                                + " (ocurre con H.265/HEVC, AV1 y algunos sonidos AC-3).");
+            }
+            Diag.add("DASH · decodificador del teléfono para la calidad elegida: "
+                    + StreamCheck.decoderNote(videoTrack.format));
+        }
+
+        Mpd.Rep audio = selectedAudio;
+        File audioFile = null;
+        if (audio != null && muxEnabled) {
+            // El audio puede llevar su propia lista de tiempos: se usa el suyo, no el
+            // del vídeo, para que ambos trozos correspondan al mismo instante.
+            String audioUrl = urlFor(audio, number, audioTimeFor(number, time));
+            if (audioUrl != null && !audioInitFailed) {
+                byte[] aInit = initBytes(audio, false);
+                File candidate = new File(cacheDir, "a_" + number + ".mp4");
+                try {
+                    stage = "trozo de audio " + number;
+                    download(audioUrl, aInit, candidate);
+                    audioFile = candidate;
+                } catch (MissingSegment missing) {
+                    Diag.add("DASH · el audio del trozo " + number + " no existe; se reproduce solo el vídeo");
+                    audioFile = null;
+                }
+            }
+        }
+        long startMs = startTimeMs(video, number, time);
+        if (audioFile == null) {
+            if (!firstPieceStarted) {
+                Diag.add("DASH · primer trozo (" + number + ") descargado sin pista de audio aparte: "
+                        + Net.readable((int) videoFile.length()) + " · " + info.describe());
+            }
+            return new Piece(videoFile, null, startMs, number, time, false, info.describe());
+        }
+        File muxed = new File(cacheDir, "m_" + number + ".mp4");
+        if (Mux.combine(videoFile, audioFile, muxed)) {
+            deleteQuietly(audioFile);
+            if (!firstPieceStarted) {
+                Diag.add("DASH · primer trozo (" + number + ") descargado y unido con el audio: "
+                        + Net.readable((int) muxed.length()));
+            }
+            // El trozo sin sonido se conserva: si el archivo unido no le sirve al
+            // reproductor, se sigue con el vídeo en vez de parar con un error.
+            return new Piece(muxed, videoFile, startMs, number, time, true, info.describe());
+        }
+        deleteQuietly(audioFile);
+        Diag.add("DASH · el trozo " + number + " se reproduce sin audio (no se pudo unir la pista de audio)");
+        return new Piece(videoFile, null, startMs, number, time, false, info.describe());
+    }
+
+    /**
+     * Busca otra calidad del mismo manifiesto que este teléfono sí pueda
+     * decodificar (por ejemplo, pasar de H.265 a H.264) y que no se haya probado
+     * todavía. Devuelve -1 si no hay ninguna.
+     */
+    private int alternativeQuality(StreamCheck.Track videoTrack) {
+        triedQualities.add(Integer.valueOf(qualityIndex));
+        int best = -1;
+        int bestScore = Integer.MAX_VALUE;
+        for (int i = 0; i < videoReps.size(); i++) {
+            if (triedQualities.contains(Integer.valueOf(i))) continue;
+            Mpd.Rep rep = videoReps.get(i);
+            if (!decodable(rep)) continue;
+            if (rep.codecs.length() > 0 && videoTrack.codec.length() > 0
+                    && rep.codecs.equalsIgnoreCase(videoTrack.codec)) {
+                continue;
+            }
+            int bandwidth = rep.bandwidth > 0 ? rep.bandwidth : 1200000;
+            int score = Math.abs(bandwidth - 1200000);
+            if (score < bestScore) {
+                bestScore = score;
+                best = i;
+            }
+        }
+        return best;
+    }
+
+    /** Tiempo del trozo en la pista de audio, usando la lista de tiempos de esa pista. */
+    private long audioTimeFor(long number, long videoTime) {
+        if (videoTime < 0 || selectedAudio == null) return videoTime;
+        if (audioTimeline == null || audioTimeline.isEmpty()) return videoTime;
+        int index = (int) (number - selectedAudio.startNumber);
+        if (index >= 0 && index < audioTimeline.size()) return audioTimeline.get(index)[0];
+        return videoTime;
+    }
+
+    private byte[] initBytes(Mpd.Rep rep, boolean video) throws IOException {
+        if (rep.initUrl == null || rep.initUrl.length() == 0) return null;
+        if (video) {
+            if (videoInit != null) return videoInit;
+        } else if (audioInit != null) {
+            return audioInit;
+        }
+        try {
+            stage = "datos iniciales";
+            byte[] data = fetchBytes(rep.initUrl, headers, 4 * 1024 * 1024);
+            if (video) videoInit = data;
+            else audioInit = data;
+            return data;
+        } catch (IOException e) {
+            if (video) videoInitFailed = true;
+            else audioInitFailed = true;
+            throw e;
+        }
+    }
+
+    /**
+     * Comprueba si los datos de una pista están CIFRADOS de verdad: descarga sus
+     * datos iniciales (o su primer trozo) y busca las entradas de muestra cifradas
+     * (encv/enca) que toda pista CENC está obligada a llevar. Devuelve null si no
+     * se pudo comprobar. No descifra nada ni pide licencias.
+     */
+    private Boolean trackLooksEncrypted(Mpd.Rep rep) {
+        if (rep == null) return null;
+        try {
+            byte[] data;
+            if (rep.initUrl != null && rep.initUrl.length() > 0) {
+                stage = "datos iniciales (comprobación de cifrado)";
+                data = fetchBytes(rep.initUrl, headers, 8L * 1024L * 1024L);
+            } else {
+                long[] first = Mpd.firstSegment(mpd, rep);
+                if (first == null) return null;
+                String url = Mpd.segmentUrl(rep, first[0], first[1]);
+                if (url == null || url.length() == 0) return null;
+                stage = "primer trozo (comprobación de cifrado)";
+                data = fetchBytes(url, headers, 4L * 1024L * 1024L);
+            }
+            return Boolean.valueOf(DrmInfo.hasEncryptedSampleEntry(data));
+        } catch (Cancelled cancelled) {
+            throw cancelled;
+        } catch (Throwable t) {
+            Diag.add("DASH · no se pudo comprobar si los datos del canal están cifrados: "
+                    + Net.describe(t));
+            return null;
+        }
+    }
+
+    /**
+     * Texto del aviso de un canal protegido. Separa los tres motivos posibles (motor,
+     * teléfono y licencia) y dice qué cambio técnico haría falta, sin prometer que el
+     * canal se pueda ver.
+     */
+    private String protectedBody(Mpd manifest, String system, boolean unknown) {
+        String name = system == null || system.length() == 0 ? "sistema no identificado" : system;
+        String host = manifest == null ? "" : manifest.licenseHost();
+        String uuid = manifest == null ? "" : manifest.videoProtectionUuid();
+        StringBuilder body = new StringBuilder();
+        body.append("El canal va protegido con DRM (").append(name).append(")");
+        if (unknown) {
+            body.append(" y no se ha podido comprobar si sus datos llegan cifrados; se trata como")
+                    .append(" protegido para no entregar al reproductor datos que no sabría descifrar.");
+        } else {
+            body.append(" y sus datos llegan cifrados (llevan muestras cifradas encv/enca).");
+        }
+        body.append("\n\n· LÍMITE DEL MOTOR: el motor DASH interno de LENY TV no descifra contenido")
+                .append(" protegido (CENC). Lee el manifiesto, las calidades y los trozos, pero no puede")
+                .append(" convertir en imagen unos datos cifrados.");
+        body.append("\n· LÍMITE DEL TELÉFONO: ").append(DrmInfo.deviceSupportFor(uuid, name)).append('.');
+        if (host.length() > 0) {
+            body.append("\n· LICENCIA: el manifiesto indica un servidor de licencias (").append(host)
+                    .append("). LENY TV no le pide ninguna licencia y no usa claves ajenas, así que aquí")
+                    .append(" no hay ninguna licencia rechazada.");
+        } else {
+            body.append("\n· LICENCIA: el manifiesto no indica servidor de licencias, así que tampoco hay")
+                    .append(" una licencia autorizada que se pueda usar.");
+        }
+        body.append("\n\n· QUÉ CAMBIO TÉCNICO HARÍA FALTA: un motor que descifre CENC con el sistema DRM")
+                .append(" del teléfono (MediaDrm para obtener la licencia del proveedor y MediaCodec con")
+                .append(" cifrado para decodificar), por ejemplo ExoPlayer/Media3 con su gestor de")
+                .append(" licencias. Ese módulo no está disponible en esta versión de la app.");
+        if (manifest != null && manifest.hasPssh) {
+            body.append("\n\nEl manifiesto incluye datos de inicio de protección (pssh).");
+        }
+        Diag.add("DASH · canal protegido · sistema " + name
+                + (host.length() == 0 ? "" : " · licencia en " + host)
+                + (unknown ? " · no se pudo comprobar el cifrado de los datos" : " · datos cifrados")
+                + " · el motor no descifra");
+        EngineInfo.license("protegido con " + name
+                + (host.length() == 0 ? "" : " · servidor de licencias: " + host)
+                + " · el motor no descifra ni pide licencias");
+        EngineInfo.drm(DrmInfo.summary());
+        return body.toString();
+    }
+
+    /** Reproduce una pista DASH de un solo archivo (SegmentBase). */
+    private void startSingleFile(final Mpd.Rep rep) {
+        singleFileMode = true;
+        Diag.add("DASH · la pista es un solo archivo: se reproduce directamente");
+        ui.post(new Runnable() {
+            @Override
+            public void run() {
+                if (released) return;
+                if (!stopped) listener.onBuffering(true);
+                MediaPlayer player = new MediaPlayer();
+                player.setAudioAttributes(new AudioAttributes.Builder()
+                        .setUsage(AudioAttributes.USAGE_MEDIA)
+                        .setContentType(AudioAttributes.CONTENT_TYPE_MOVIE)
+                        .build());
+                if (surface != null) player.setSurface(surface);
+                player.setOnPreparedListener(new MediaPlayer.OnPreparedListener() {
+                    @Override
+                    public void onPrepared(MediaPlayer mp) {
+                        firstPieceStarted = true;
+                        activeStartMs = 0;
+                        playClockMs = System.currentTimeMillis();
+                        videoWidth = mp.getVideoWidth();
+                        videoHeight = mp.getVideoHeight();
+                        listener.onVideoSize(videoWidth, videoHeight);
+                        listener.onBuffering(false);
+                        mp.start();
+                        if (paused) {
+                            // El cambio de resolución no debe arrancar el canal si la
+                            // persona lo había pausado.
+                            try {
+                                mp.pause();
+                            } catch (Throwable ignored) {
+                            }
+                        }
+                    }
+                });
+                player.setOnVideoSizeChangedListener(new MediaPlayer.OnVideoSizeChangedListener() {
+                    @Override
+                    public void onVideoSizeChanged(MediaPlayer mp, int width, int height) {
+                        videoWidth = width;
+                        videoHeight = height;
+                        listener.onVideoSize(width, height);
+                    }
+                });
+                player.setOnErrorListener(new MediaPlayer.OnErrorListener() {
+                    @Override
+                    public boolean onError(MediaPlayer mp, int what, int extra) {
+                        Diag.add("DASH · error del archivo único · " + MediaErrors.kind(what, extra)
+                                + " (what=" + what + ", extra=" + extra + ")");
+                        fail("No se pudo reproducir el archivo DASH",
+                                "El manifiesto apunta a un solo archivo y el reproductor no pudo con él.\n\n"
+                                        + MediaErrors.explain(what, extra));
+                        return true;
+                    }
+                });
+                player.setOnCompletionListener(new MediaPlayer.OnCompletionListener() {
+                    @Override
+                    public void onCompletion(MediaPlayer mp) {
+                        if (!released) listener.onFinished();
+                    }
+                });
+                slotA.player = player;
+                active = slotA;
+                try {
+                    if (headers.isEmpty()) player.setDataSource(context, Uri.parse(rep.baseUrl));
+                    else player.setDataSource(context, Uri.parse(rep.baseUrl), headers);
+                    player.prepareAsync();
+                } catch (Throwable t) {
+                    fail("No se pudo abrir el archivo DASH", "El reproductor informó: " + Net.describe(t));
+                }
+            }
+        });
+    }
+<<<<<< FIN PARCIAL DE LA PARTE 18: el archivo continua en la PARTE 19 >>>>>>
+
+
+FIN DE LA PARTE 18. El resto de DashPlayer.java esta en la parte 19.

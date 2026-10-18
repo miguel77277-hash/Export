@@ -1,0 +1,508 @@
+LENY TV 1.55 — CODIGO FUENTE REAL — PARTE 6 (JAVA / TANDA A, continuacion)
+=======================================================================
+Texto LITERAL de 3 archivos Java del proyecto original.
+
+  1. src/main/java/com/pocketbuilder/app_wslenytv1792177359057/FormatDetector.java  (4.330 bytes)
+  2. src/main/java/com/pocketbuilder/app_wslenytv1792177359057/AppPrefs.java        (6.961 bytes)
+  3. src/main/java/com/pocketbuilder/app_wslenytv1792177359057/Ui.java              (6.760 bytes)
+
+
+<<<<<< ARCHIVO: src/main/java/com/pocketbuilder/app_wslenytv1792177359057/FormatDetector.java >>>>>>
+package com.pocketbuilder.app_wslenytv1792177359057;
+
+import java.util.Locale;
+
+/**
+ * Detección del tipo de contenido por extensión de la URL y por el tipo MIME
+ * informado por el servidor. El tipo elegido a mano por el usuario siempre gana.
+ */
+final class FormatDetector {
+
+    static final String AUTO = "Automático";
+    static final String HLS = "HLS (.m3u8)";
+    static final String TS = "MPEG-TS (.ts)";
+    static final String DASH = "DASH (.mpd)";
+    static final String MP4 = "MP4 (.mp4)";
+    static final String WEBM = "WebM (.webm)";
+    static final String OTHER = "Otro (directo)";
+
+    private FormatDetector() {
+    }
+
+    static String[] options() {
+        return new String[]{AUTO, HLS, TS, DASH, MP4, WEBM, OTHER};
+    }
+
+    static boolean isAuto(String label) {
+        return label == null || label.length() == 0 || AUTO.equals(label);
+    }
+
+    static boolean isDash(String label) {
+        return DASH.equals(label);
+    }
+
+    /** Detección por extensión. */
+    static String fromUrl(String url) {
+        String path = url == null ? "" : url.toLowerCase(Locale.US);
+        int q = path.indexOf('?');
+        if (q > 0) path = path.substring(0, q);
+        int h = path.indexOf('#');
+        if (h > 0) path = path.substring(0, h);
+        if (path.endsWith(".m3u8") || path.endsWith(".m3u")) return HLS;
+        if (path.endsWith(".mpd")) return DASH;
+        if (path.endsWith(".ts") || path.endsWith(".mts") || path.endsWith(".m2ts")) return TS;
+        if (path.endsWith(".mp4") || path.endsWith(".m4v") || path.endsWith(".mov")) return MP4;
+        if (path.endsWith(".webm") || path.endsWith(".mkv")) return WEBM;
+        return OTHER;
+    }
+
+    /** Detección por el tipo de contenido (Content-Type) del servidor. */
+    static String fromContentType(String contentType) {
+        if (contentType == null) return OTHER;
+        String ct = contentType.toLowerCase(Locale.US);
+        if (ct.indexOf("mpegurl") >= 0 || ct.indexOf("x-mpegurl") >= 0 || ct.indexOf("vnd.apple.mpegurl") >= 0) return HLS;
+        if (ct.indexOf("dash+xml") >= 0) return DASH;
+        if (ct.indexOf("mp2t") >= 0) return TS;
+        if (ct.indexOf("webm") >= 0) return WEBM;
+        if (ct.indexOf("mp4") >= 0 || ct.indexOf("quicktime") >= 0) return MP4;
+        return OTHER;
+    }
+
+    /**
+     * Afina el tipo cuando la extensión no dice nada: primero por el tipo MIME,
+     * y como último recurso se deja "Otro (directo)".
+     */
+    static String refine(String url, String contentType) {
+        String byUrl = fromUrl(url);
+        if (!OTHER.equals(byUrl)) return byUrl;
+        String byMime = fromContentType(contentType);
+        if (!OTHER.equals(byMime)) return byMime;
+        return OTHER;
+    }
+
+    /** Una URL con pinta de archivo de lista (M3U/M3U8). */
+    static boolean looksLikePlaylistFile(String url) {
+        String u = url == null ? "" : url.toLowerCase(Locale.US);
+        return u.endsWith(".m3u") || u.endsWith(".m3u8");
+    }
+
+    static String explain(String type) {
+        if (HLS.equals(type)) return "HLS: lista de segmentos .m3u8 (se reproduce como vídeo)";
+        if (TS.equals(type)) return "MPEG-TS: flujo de transporte .ts";
+        if (DASH.equals(type)) return "DASH (.mpd): manifiesto de segmentos; lo reproduce el motor DASH interno";
+        if (MP4.equals(type)) return "MP4: archivo progresivo";
+        if (WEBM.equals(type)) return "WebM: archivo progresivo";
+        return "Tipo directo: se enviará el enlace al reproductor del sistema";
+    }
+
+    /**
+     * Texto de ayuda del formato DASH. LENY TV lo reproduce con su motor DASH
+     * interno (lectura del manifiesto, descarga de trozos y unión de audio y
+     * vídeo), así que ya no se avisa de que el formato no sea compatible.
+     */
+    static String dashHelp(String url) {
+        return "El formato DASH (.mpd) lo reproduce el motor DASH interno de LENY TV: lee el manifiesto,"
+                + " elige la calidad y va pidiendo los trozos del canal (uniendo la pista de audio con la"
+                + " de vídeo cuando van separadas).\n\nEnlace: " + shorten(url);
+    }
+
+    static String shorten(String url) {
+        if (url == null) return "";
+        if (url.length() <= 70) return url;
+        return url.substring(0, 40) + "…" + url.substring(url.length() - 25);
+    }
+}
+<<<<<< FIN: src/main/java/com/pocketbuilder/app_wslenytv1792177359057/FormatDetector.java >>>>>>
+
+
+<<<<<< ARCHIVO: src/main/java/com/pocketbuilder/app_wslenytv1792177359057/AppPrefs.java >>>>>>
+package com.pocketbuilder.app_wslenytv1792177359057;
+
+import android.content.Context;
+import android.content.SharedPreferences;
+
+import java.util.Map;
+import java.util.TreeMap;
+
+/** Preferencias de la app: cabeceras HTTP, tipo de contenido, imagen y controles. */
+final class AppPrefs {
+
+    private static final String FILE = "leny_tv_prefs";
+
+    private static final String K_UA = "http_user_agent";
+    private static final String K_REFERER = "http_referer";
+    private static final String K_TYPE = "content_type";
+    private static final String K_ASPECT = "aspect_mode";
+    private static final String K_HIDE = "hide_delay_seconds";
+    private static final String K_SCREEN_ON = "keep_screen_on";
+    private static final String K_LAST_URL = "last_url";
+    private static final String K_AUTO_UA = "auto_user_agent";
+    private static final String K_AUTO_REFERER = "auto_referer";
+    private static final String K_EXTRA = "http_extra_headers";
+
+    static final String ASPECT_FIT = "fit";
+    static final String ASPECT_FILL = "fill";
+    static final String ASPECT_CROP = "crop";
+    static final String ASPECT_ORIGINAL = "original";
+
+    private AppPrefs() {
+    }
+
+    private static SharedPreferences prefs(Context c) {
+        return c.getApplicationContext().getSharedPreferences(FILE, Context.MODE_PRIVATE);
+    }
+
+    static String userAgent(Context c) {
+        return prefs(c).getString(K_UA, "");
+    }
+
+    static void setUserAgent(Context c, String v) {
+        prefs(c).edit().putString(K_UA, v == null ? "" : v.trim()).apply();
+    }
+
+    static String referer(Context c) {
+        return prefs(c).getString(K_REFERER, "");
+    }
+
+    static void setReferer(Context c, String v) {
+        prefs(c).edit().putString(K_REFERER, v == null ? "" : v.trim()).apply();
+    }
+
+    static String contentType(Context c) {
+        return prefs(c).getString(K_TYPE, FormatDetector.AUTO);
+    }
+
+    static void setContentType(Context c, String v) {
+        prefs(c).edit().putString(K_TYPE, v == null ? FormatDetector.AUTO : v).apply();
+    }
+
+    /**
+     * Cabeceras HTTP que se envían al cargar listas y al reproducir.
+     *
+     * Nunca van vacías: si el usuario no ha escrito nada se envía un User-Agent
+     * de reproductor (VLC), que es lo que aceptan casi todos los proveedores
+     * IPTV. Si al cargar la lista funcionó otro juego de cabeceras, se reutiliza
+     * ese automáticamente para que los canales también se reproduzcan.
+     */
+    static Map<String, String> headers(Context c) {
+        String ua = userAgent(c);
+        if (ua.length() == 0) ua = autoUserAgent(c);
+        if (ua.length() == 0) ua = Net.PLAYER_UA;
+        String ref = referer(c);
+        if (ref.length() == 0) ref = autoReferer(c);
+        Map<String, String> map = new TreeMap<String, String>();
+        // Cabeceras adicionales escritas por el usuario (una por línea, "Nombre: valor").
+        map.putAll(parseExtraHeaders(extraHeaders(c)));
+        map.put("User-Agent", ua);
+        if (ref.length() > 0) map.put("Referer", ref);
+        return map;
+    }
+
+    /** Cabeceras adicionales tal y como las escribió el usuario. */
+    static String extraHeaders(Context c) {
+        return prefs(c).getString(K_EXTRA, "");
+    }
+
+    static void setExtraHeaders(Context c, String value) {
+        prefs(c).edit().putString(K_EXTRA, value == null ? "" : value.trim()).apply();
+    }
+
+    /**
+     * Convierte lo escrito por el usuario en cabeceras HTTP. Se admite una por
+     * línea con el formato "Nombre: valor" (o "Nombre=valor"). Las líneas vacías y
+     * las que empiezan por # se ignoran, y nunca lanza excepción.
+     */
+    static Map<String, String> parseExtraHeaders(String text) {
+        Map<String, String> map = new TreeMap<String, String>();
+        if (text == null || text.trim().length() == 0) return map;
+        String[] lines = text.split("\n");
+        for (int i = 0; i < lines.length; i++) {
+            String line = lines[i] == null ? "" : lines[i].trim();
+            if (line.length() == 0 || line.charAt(0) == '#') continue;
+            int cut = line.indexOf(':');
+            if (cut <= 0) cut = line.indexOf('=');
+            if (cut <= 0) continue;
+            String name = line.substring(0, cut).trim();
+            String value = line.substring(cut + 1).trim();
+            if (name.length() == 0 || value.length() == 0) continue;
+            map.put(name, value);
+        }
+        return map;
+    }
+
+    /** Cabeceras automáticas guardadas cuando una lista solo se pudo cargar con ellas. */
+    static void setAutoHeaders(Context c, String userAgent, String referer) {
+        SharedPreferences.Editor editor = prefs(c).edit();
+        editor.putString(K_AUTO_UA, userAgent == null ? "" : userAgent.trim());
+        editor.putString(K_AUTO_REFERER, referer == null ? "" : referer.trim());
+        editor.apply();
+    }
+
+    static String autoUserAgent(Context c) {
+        return prefs(c).getString(K_AUTO_UA, "");
+    }
+
+    static String autoReferer(Context c) {
+        return prefs(c).getString(K_AUTO_REFERER, "");
+    }
+
+    /** true si se está usando una cabecera guardada automáticamente. */
+    static boolean usingAutoHeaders(Context c) {
+        return userAgent(c).length() == 0 && autoUserAgent(c).length() > 0;
+    }
+
+    static String aspect(Context c) {
+        return prefs(c).getString(K_ASPECT, ASPECT_FIT);
+    }
+
+    static void setAspect(Context c, String key) {
+        prefs(c).edit().putString(K_ASPECT, key).apply();
+    }
+
+    static String[] aspectKeys() {
+        return new String[]{ASPECT_FIT, ASPECT_FILL, ASPECT_CROP, ASPECT_ORIGINAL};
+    }
+
+    static String[] aspectLabels() {
+        return new String[]{"Ajustar a la pantalla", "Llenar (estirar)", "Recortar (zoom)", "Tamaño original"};
+    }
+
+    static String aspectLabel(String key) {
+        String[] keys = aspectKeys();
+        String[] labels = aspectLabels();
+        for (int i = 0; i < keys.length; i++) {
+            if (keys[i].equals(key)) return labels[i];
+        }
+        return labels[0];
+    }
+
+    static int aspectIndex(String key) {
+        String[] keys = aspectKeys();
+        for (int i = 0; i < keys.length; i++) {
+            if (keys[i].equals(key)) return i;
+        }
+        return 0;
+    }
+
+    static int hideDelaySeconds(Context c) {
+        return prefs(c).getInt(K_HIDE, 5);
+    }
+
+    static void setHideDelaySeconds(Context c, int seconds) {
+        prefs(c).edit().putInt(K_HIDE, seconds).apply();
+    }
+
+    static boolean keepScreenOn(Context c) {
+        return prefs(c).getBoolean(K_SCREEN_ON, true);
+    }
+
+    static void setKeepScreenOn(Context c, boolean on) {
+        prefs(c).edit().putBoolean(K_SCREEN_ON, on).apply();
+    }
+
+    static String lastUrl(Context c) {
+        return prefs(c).getString(K_LAST_URL, "");
+    }
+
+    static void setLastUrl(Context c, String url) {
+        prefs(c).edit().putString(K_LAST_URL, url == null ? "" : url).apply();
+    }
+}
+<<<<<< FIN: src/main/java/com/pocketbuilder/app_wslenytv1792177359057/AppPrefs.java >>>>>>
+
+
+<<<<<< ARCHIVO: src/main/java/com/pocketbuilder/app_wslenytv1792177359057/Ui.java >>>>>>
+package com.pocketbuilder.app_wslenytv1792177359057;
+
+import android.content.Context;
+import android.graphics.Typeface;
+import android.graphics.drawable.Drawable;
+import android.graphics.drawable.GradientDrawable;
+import android.graphics.drawable.StateListDrawable;
+import android.text.TextUtils;
+import android.util.TypedValue;
+import android.view.Gravity;
+import android.view.View;
+import android.view.ViewGroup;
+import android.widget.BaseAdapter;
+import android.widget.TextView;
+
+/** Paleta retro TV y ayudas para construir la interfaz por código. */
+final class Ui {
+
+    static final int BG = 0xFF08080F;
+    static final int HEADER = 0xFF12121C;
+    static final int PANEL = 0xFF15151F;
+    static final int CARD = 0xFF1B1B28;
+    static final int CARD_SEL = 0xFF2B2B40;
+    static final int RED = 0xFFE13A2B;
+    static final int RED_DEEP = 0xFF7C1A11;
+    static final int BLUE = 0xFF2D63E8;
+    static final int BLUE_DEEP = 0xFF142F6E;
+    static final int TEXT = 0xFFF4F4F8;
+    static final int TEXT_DIM = 0xFF9E9EB2;
+    static final int TEXT_MUTED = 0xFF6E6E85;
+    static final int OK = 0xFF3EC46E;
+    static final int WARN = 0xFFE8A33D;
+
+    private Ui() {
+    }
+
+    static float dp(Context c, float value) {
+        return TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_DIP, value, c.getResources().getDisplayMetrics());
+    }
+
+    static int dpi(Context c, float value) {
+        return Math.round(dp(c, value));
+    }
+
+    static GradientDrawable rounded(Context c, int fill, float radiusDp) {
+        GradientDrawable g = new GradientDrawable();
+        g.setShape(GradientDrawable.RECTANGLE);
+        g.setColor(fill);
+        g.setCornerRadius(dp(c, radiusDp));
+        return g;
+    }
+
+    static GradientDrawable roundedStroke(Context c, int fill, int stroke, float strokeDp, float radiusDp) {
+        GradientDrawable g = rounded(c, fill, radiusDp);
+        if (stroke != 0) g.setStroke(Math.max(1, dpi(c, strokeDp)), stroke);
+        return g;
+    }
+
+    static Drawable buttonBg(Context c, int fill, int pressed, int stroke, float radiusDp) {
+        StateListDrawable s = new StateListDrawable();
+        s.addState(new int[]{android.R.attr.state_pressed}, roundedStroke(c, pressed, stroke, 1.5f, radiusDp));
+        s.addState(new int[]{android.R.attr.state_focused}, roundedStroke(c, pressed, stroke, 2f, radiusDp));
+        s.addState(new int[]{}, roundedStroke(c, fill, stroke, 1.5f, radiusDp));
+        return s;
+    }
+
+    static TextView text(Context c, CharSequence value, float sizeSp, int color, boolean bold) {
+        TextView t = new TextView(c);
+        t.setText(value);
+        t.setTextSize(sizeSp);
+        t.setTextColor(color);
+        if (bold) t.setTypeface(Typeface.DEFAULT_BOLD);
+        return t;
+    }
+
+    /** Botón de texto tipo "placa" del mando. */
+    static TextView actionButton(Context c, CharSequence label) {
+        return plate(c, label, CARD, Ui.TEXT, Ui.RED_DEEP);
+    }
+
+    static TextView primaryButton(Context c, CharSequence label) {
+        return plate(c, label, RED, 0xFFFFFFFF, RED_DEEP);
+    }
+
+    static TextView plate(Context c, CharSequence label, int fill, int textColor, int stroke) {
+        TextView b = text(c, label, 13f, textColor, true);
+        b.setGravity(Gravity.CENTER);
+        b.setAllCaps(true);
+        b.setLetterSpacing(0.06f);
+        b.setPadding(dpi(c, 14), dpi(c, 10), dpi(c, 14), dpi(c, 10));
+        b.setBackground(buttonBg(c, fill, CARD_SEL, stroke, 6f));
+        b.setClickable(true);
+        b.setFocusable(true);
+        b.setMinHeight(dpi(c, 44));
+        b.setMinWidth(dpi(c, 44));
+        return b;
+    }
+
+    /** Botón cuadrado con icono dibujado y etiqueta accesible. */
+    static TextView iconButton(Context c, Drawable icon, String description, float sizeDp) {
+        TextView b = new TextView(c);
+        int size = dpi(c, sizeDp);
+        b.setWidth(size);
+        b.setHeight(size);
+        icon.setBounds(0, 0, dpi(c, sizeDp * 0.52f), dpi(c, sizeDp * 0.52f));
+        b.setCompoundDrawables(null, icon, null, null);
+        b.setGravity(Gravity.CENTER);
+        b.setContentDescription(description);
+        b.setBackground(buttonBg(c, 0x66000000, 0x99E13A2B, 0x66F4F4F8, 6f));
+        b.setClickable(true);
+        b.setFocusable(true);
+        return b;
+    }
+
+    static View space(Context c, int widthDp, int heightDp) {
+        View v = new View(c);
+        v.setLayoutParams(new android.widget.LinearLayout.LayoutParams(dpi(c, widthDp), dpi(c, heightDp)));
+        return v;
+    }
+
+    static View hLine(Context c, int color, float heightDp) {
+        View v = new View(c);
+        v.setBackgroundColor(color);
+        v.setLayoutParams(new android.widget.LinearLayout.LayoutParams(
+                android.widget.LinearLayout.LayoutParams.MATCH_PARENT, Math.max(1, dpi(c, heightDp))));
+        return v;
+    }
+
+    /** Adaptador sencillo para los desplegables, con el estilo oscuro de la app. */
+    static final class SpinnerAdapter extends BaseAdapter {
+        private final Context ctx;
+        private final String[] items;
+
+        SpinnerAdapter(Context c, String[] items) {
+            this.ctx = c;
+            this.items = items == null ? new String[0] : items;
+        }
+
+        @Override
+        public int getCount() {
+            return items.length;
+        }
+
+        @Override
+        public Object getItem(int position) {
+            return items[position];
+        }
+
+        @Override
+        public long getItemId(int position) {
+            return position;
+        }
+
+        String labelAt(int position) {
+            if (position < 0 || position >= items.length) return "";
+            return items[position];
+        }
+
+        int indexOf(String label) {
+            for (int i = 0; i < items.length; i++) {
+                if (items[i].equals(label)) return i;
+            }
+            return 0;
+        }
+
+        @Override
+        public View getView(int position, View convertView, ViewGroup parent) {
+            return row(labelAt(position), false);
+        }
+
+        @Override
+        public View getDropDownView(int position, View convertView, ViewGroup parent) {
+            return row(labelAt(position), true);
+        }
+
+        private View row(String value, boolean dropdown) {
+            TextView t = text(ctx, value, 13f, TEXT, false);
+            t.setMaxLines(1);
+            t.setEllipsize(TextUtils.TruncateAt.END);
+            t.setPadding(dpi(ctx, 10), dpi(ctx, 9), dpi(ctx, 10), dpi(ctx, 9));
+            if (dropdown) {
+                t.setTextColor(TEXT_DIM);
+                t.setBackgroundColor(0xFF101018);
+            } else {
+                t.setBackground(buttonBg(ctx, PANEL, CARD_SEL, BLUE_DEEP, 6f));
+            }
+            return t;
+        }
+    }
+}
+<<<<<< FIN: src/main/java/com/pocketbuilder/app_wslenytv1792177359057/Ui.java >>>>>>
+
+
+FIN DE LA PARTE 6 (3 archivos). Continua en la parte 7.

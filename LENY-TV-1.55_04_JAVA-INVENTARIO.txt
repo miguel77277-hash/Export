@@ -1,0 +1,157 @@
+================================================================================
+LENY TV 1.55 — PARTE 4: INVENTARIO DE LOS ARCHIVOS JAVA (LISTA COMPLETA)
+================================================================================
+Aquí está la lista COMPLETA y EXACTA de los archivos Java del proyecto: ruta
+original, tamaño en bytes y qué hace cada uno. Es la plantilla para ir
+rellenando el contenido de cada clase por partes.
+
+Por qué el código no está pegado aquí: entre todos suman 894.125 bytes en 38
+archivos del paquete de la app, más 1.864 bytes del archivo sobrante
+AppView.java (895.989 bytes en total). Eso no cabe en un único archivo de texto
+que yo pueda escribir de una vez, porque el texto hay que reproducirlo carácter
+a carácter, y una copia parcial o con erratas sería peor que no tener copia.
+Por eso se entrega el inventario y el contenido se añade por tandas, o se saca
+del proyecto del teléfono (ver PARTE 3 y el ÍNDICE).
+
+Marcador a usar al pegar cada clase:
+    <<<<<< ARCHIVO: <ruta> >>>>>>
+    ...código completo...
+    <<<<<< FIN: <ruta> >>>>>>
+
+Prefijo de todas las rutas del paquete:
+    src/main/java/com/pocketbuilder/app_wslenytv1792177359057/
+
+--------------------------------------------------------------------------------
+A. ENTRADA Y PORTADA — 2 archivos, 26.551 B
+--------------------------------------------------------------------------------
+ 1. CoverActivity.java                 15.007 B
+    Pantalla de bienvenida (única entrada MAIN/LAUNCHER del icono). Dibuja la
+    portada con assets/generated/portada.png y cover.png y el botón ENTRAR que
+    abre MainActivity.
+ 2. WelcomeCover.java                  11.544 B
+    Piezas de la portada de bienvenida (composición visual y textos de ayuda).
+
+--------------------------------------------------------------------------------
+B. PANTALLA DE CANALES — 12 archivos, 243.143 B
+--------------------------------------------------------------------------------
+ 3. MainActivity.java                 176.423 B   (el más grande del proyecto)
+    Pantalla principal: carga de listas M3U, categorías, filas de canales, panel
+    de canales, ajustes, búsqueda de listas en el teléfono y navegación al
+    reproductor. Casi toda la interfaz se construye aquí por código.
+ 4. RogBar.java                        11.380 B   Barra superior del estilo de la
+                                                  pantalla de canales.
+ 5. RogStyle.java                       3.337 B   Colores y medidas de ese estilo.
+ 6. RogCategoryAdapter.java             3.697 B   Adaptador de la lista de categorías.
+ 7. RogChannelAdapter.java              3.762 B   Adaptador de la lista de canales.
+ 8. WrapRow.java                        3.586 B   Contenedor de filas ajustado al
+                                                  contenido.
+ 9. Names.java                          9.706 B   Normalización de nombres de canales
+                                                  y grupos.
+10. Icons.java                          9.934 B   Iconos dibujados por código (Canvas).
+11. Ui.java                             6.760 B   Utilidades de interfaz (dp, tamaños de
+                                                  texto, botones, avisos).
+12. Art.java                            1.093 B   Carga de imágenes desde assets.
+13. DemoData.java                       2.262 B   Canales de demostración iniciales.
+14. PlaylistStore.java                 11.203 B   Guardado y recuperación de listas.
+
+--------------------------------------------------------------------------------
+C. REPRODUCTOR — 4 archivos, 179.422 B
+--------------------------------------------------------------------------------
+15. PlayerActivity.java              154.456 B
+    Pantalla del reproductor: reproducción/pausa, pantalla completa, volumen,
+    indicador de carga, mensajes de error, panel de canales, menú CALIDAD,
+    ajustes del reproductor y liberación ordenada del motor.
+16. PlayerIcons.java                  10.033 B   Iconos del reproductor (Canvas).
+17. Immersion.java                     7.390 B   Pantalla completa, orientación y
+                                                 ocultar barras del sistema.
+18. MediaErrors.java                   7.543 B   Traducción de errores de reproducción
+                                                 a mensajes claros.
+
+--------------------------------------------------------------------------------
+D. MOTOR DASH PROPIO — 7 archivos, 191.880 B
+--------------------------------------------------------------------------------
+19. DashPlayer.java                   83.253 B
+    Motor DASH: descarga manifiesto y segmentos, elige pistas y calidad, une
+    audio y vídeo con Mux y reproduce con MediaPlayer a través de LocalProxy.
+    Incluye la lectura de la protección DRM y el aviso honesto: NO descifra CENC.
+20. Mpd.java                          48.976 B   Lector de manifiestos .mpd
+                                                 (Period/AdaptationSet/Representation,
+                                                 SegmentTemplate/SegmentList,
+                                                 ContentProtection y PSSH).
+21. DashProbe.java                    16.335 B   Sondeo previo del manifiesto (tipo,
+                                                 calidades, protección).
+22. StreamQuality.java                14.899 B   Calidades de un enlace que NO pasa
+                                                 por el motor DASH (manifiesto MPD o
+                                                 lista maestra HLS con RESOLUTION).
+23. DrmInfo.java                      10.208 B   Qué DRM se declara, si el teléfono lo
+                                                 soporta (MediaDrm) y si los datos
+                                                 traen muestras cifradas (encv/enca).
+24. EngineInfo.java                    9.552 B   Estado del motor (qué está usando).
+25. Mux.java                           8.657 B   MediaCodec + MediaMuxer: unión de
+                                                 pistas en un archivo reproducible.
+
+--------------------------------------------------------------------------------
+E. RED, DATOS Y LISTAS — 10 archivos, 191.924 B
+--------------------------------------------------------------------------------
+26. M3uParser.java                    61.084 B
+    Lector de listas M3U/M3U8: atributos, cabeceras por canal, grupos, logos y
+    los datos de licencia que traiga la lista. No confundir con reproducir un
+    .m3u8 de vídeo: eso lo decide FormatDetector junto con PlayerActivity.
+27. Net.java                          42.132 B   HTTP/HTTPS, redirecciones,
+                                                 cabeceras y tiempos de espera.
+28. LocalProxy.java                   22.227 B   Servidor local que entrega a
+                                                 MediaPlayer el archivo ya unido.
+29. Headers.java                      12.621 B   Cabeceras por canal (User-Agent,
+                                                 Referer, etc.).
+30. StreamCheck.java                  13.249 B   Comprobación previa del enlace.
+31. LogoLoader.java                   13.092 B   Descarga y caché de logos.
+32. Channel.java                       9.644 B   Modelo de canal.
+33. FormatDetector.java                4.330 B   Tipo de contenido por extensión y
+                                                 por cabecera Content-Type.
+34. AppPrefs.java                      6.961 B   Preferencias guardadas.
+35. LocalLists.java                    6.584 B   Listas encontradas en el teléfono.
+
+--------------------------------------------------------------------------------
+F. DIAGNÓSTICO Y VERSIÓN — 3 archivos, 61.205 B
+--------------------------------------------------------------------------------
+36. SelfTest.java                     34.784 B   Autocomprobaciones internas.
+37. InstallInfo.java                  16.702 B   Versión instalada y datos del APK
+                                                 (1.55 / 55).
+38. Diag.java                          9.719 B   Pantalla DIAGNÓSTICO y registro
+                                                 interno (revisión, motor, errores).
+
+--------------------------------------------------------------------------------
+G. RESTO DE LA PLANTILLA (fuera del paquete) — 1 archivo, 1.864 B
+--------------------------------------------------------------------------------
+39. src/main/java/com/pocketbuilder/generatedapp/AppView.java   1.864 B
+    Vista de la plantilla inicial de PocketBuilder. NO se usa en LENY TV y se
+    puede borrar al reconstruir fuera.
+
+RECUENTO: 38 archivos en el paquete de la app = 894.125 B
+        + AppView.java = 1.864 B
+        = 39 archivos, 895.989 B.
+
+--------------------------------------------------------------------------------
+H. ORDEN RECOMENDADO PARA COPIAR POR PARTES
+--------------------------------------------------------------------------------
+Cada tanda cierra un grupo que ya se puede leer con sentido:
+ 1) Diag, InstallInfo, AppPrefs, Channel, FormatDetector, Headers
+ 2) Net, LocalProxy, M3uParser, LogoLoader, LocalLists, StreamCheck,
+    PlaylistStore
+ 3) Mux, EngineInfo, DrmInfo, Mpd, DashProbe, StreamQuality
+ 4) DashPlayer
+ 5) MediaErrors, Immersion, PlayerIcons
+ 6) PlayerActivity
+ 7) Ui, Art, Icons, Names, DemoData, RogStyle, RogBar, RogCategoryAdapter,
+    RogChannelAdapter, WrapRow
+ 8) MainActivity
+ 9) WelcomeCover, CoverActivity
+10) AppView.java
+
+Los pasos 4, 6 y 8 son archivos de 80-176 KB: copiarlos exige reproducirlos
+enteros, y si la copia no sale fiel hay que decirlo y no darla por buena. La
+alternativa fiable es sacar los .java directamente de la carpeta del proyecto
+del teléfono (por ADB o exportando el proyecto), como se explica en la PARTE 3.
+================================================================================
+FIN DE LA PARTE 4
+================================================================================
